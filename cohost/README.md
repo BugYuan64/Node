@@ -1,6 +1,6 @@
 # 部署与维护
 
-当前001的Xray、Hysteria2与Caddy共享完整HTTPS订阅。项目结构、客户端用法和验收见[根README](../README.md)。
+当前001的Xray、Hysteria2与Caddy共享完整HTTPS订阅。项目结构、客户端用法和验收见[根README](https://github.com/BugYuan64/Node/blob/main/README.md)。
 
 ## 条件与安装
 
@@ -42,9 +42,9 @@ tune-network将UDP收发上限提升到至少7340032字节并启用TCP BBR，保
 
 状态和pending在/etc/cohost-proxy；事务快照在/var/backups/cohost-proxy。重新执行对应install、finalize、update-rules、tune-network或decouple-services会先恢复未完成事务。不要手工删除pending及其备份；恢复失败会保留pending。
 
-依赖迁移恢复仅还原unit并daemon-reload，不停止数据进程。001本轮源码/unit回退包为/var/backups/cohost-proxy/pre-decouple-20261016.tar.gz（0600）；逐事务unit快照也保留。需要撤回时同时还原配套管理源码及unit，再daemon-reload并用对应版本check，避免仅恢复unit造成渲染漂移。
+依赖迁移中断恢复仅还原unit并daemon-reload，不停止数据进程。001清理旧版资料后，只保留/var/backups/cohost-proxy/current.tar.gz及current.tar.gz.sha256（均0600）作为当前部署快照；快照含源码、二进制、服务配置、私有状态、证书与内部校验清单。需要恢复时先校验摘要并检查内部清单，协调服务窗口后恢复配套文件、属主权限和服务依赖，避免仅恢复unit造成渲染漂移。
 
-既有完整恢复包current.tar.gz及其他有效快照继续保留；可能含二进制、证书、密码及令牌，不进入Git或公开日志。尚未演练整机恢复或重启持久性；Git源码和本机YAML都不能替代这些私有资料。
+本次在无pending且当前快照逐文件内容校验成功后，删除已完成事务的历史快照及旧版回退包。以后产生的新pending及其引用备份仍必须保留到对应事务恢复/完成；不要套用本次清单盲目清理。当前快照含证书、密码及令牌，不进入Git或公开日志。尚未演练独立机器恢复或重启持久性；Git源码和本机YAML不能替代私有快照及系统环境准备。完整目录见[001部署文件目录](https://github.com/BugYuan64/Node/blob/main/001部署文件目录.md)。
 
 ## 客户端及私有资料
 
