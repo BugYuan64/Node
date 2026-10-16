@@ -30,10 +30,10 @@ import time
 import urllib.request
 
 try:
-    from .render import load_xray_state, render, subscription_url, validate_settings
+    from .render import load_xray_state, render, render_service_unit, subscription_url, validate_settings
     from .verify import smoke
 except ImportError:  # Also support `python3 deploy.py` from the cohost directory.
-    from render import load_xray_state, render, subscription_url, validate_settings
+    from render import load_xray_state, render, render_service_unit, subscription_url, validate_settings
     from verify import smoke
 
 
@@ -160,6 +160,11 @@ def restore_pending() -> None:
         run("systemctl", "disable", "hy2-mihomo.service")
     for name, value in manifest.items():
         restore(Path(name), value)
+    if pending["action"] == "decouple-services":
+        # Loading dependencies neither restarts the data channels nor changes certificates.
+        run("systemctl", "daemon-reload")
+        PENDING.unlink()
+        return
     if pending["action"] == "tune-network":
         for key, value in pending.get("network_values", {}).items():
             run("sysctl", "-w", f"{key}={value}", capture=True)
@@ -317,24 +322,40 @@ def read_state() -> dict:
     return data
 
 
-def check(*, allow_pending: bool = False) -> None:
+def check_rendered_files(data: dict[str, str], sub_filename: str, *, allow_coupled_unit: bool = False) -> None:
+    expected = {
+        CADDY_SNIPPET: "caddy.caddy",
+        HY_CONFIG: "hysteria.yaml",
+        UNIT: "hy2-mihomo.service",
+        SUB_DIR / sub_filename: "mihomo.yaml",
+    }
+    for path, key in expected.items():
+        actual = path.read_text(encoding="utf-8") if path.is_file() else None
+        if path == UNIT and allow_coupled_unit and actual == render_service_unit(coupled=True):
+            continue
+        if actual != data[key]:
+            raise RuntimeError(f"deployed file differs from rendered source: {path}")
+
+
+def check_service_dependencies() -> None:
+    dependencies = run("systemctl", "show", "hy2-mihomo.service",
+                       "--property=Requires,BindsTo,PartOf,Requisite", "--value", capture=True).stdout.split()
+    if "caddy.service" in dependencies:
+        raise RuntimeError("HY2 retains a strong Caddy dependency; inspect systemd drop-ins")
+
+
+def check(*, allow_pending: bool = False, allow_coupled_unit: bool = False) -> None:
     if PENDING.exists() and not allow_pending:
-        raise RuntimeError("deployment has a pending change; run install/finalize to recover")
+        raise RuntimeError("deployment has a pending change; rerun the pending maintenance command to recover")
     state = read_state()
     xray = load_xray_state(XRAY_STATE)
     if hashlib.sha256(XRAY_STATE.read_bytes()).hexdigest() != state["xray_sha256"]:
         raise RuntimeError("Xray state drifted since cohost installation")
     settings = state["settings"]
     data = render(xray, settings, legacy=state["phase"] == "staged")
-    expected = {
-        CADDY_SNIPPET: "caddy.caddy",
-        HY_CONFIG: "hysteria.yaml",
-        UNIT: "hy2-mihomo.service",
-        SUB_DIR / settings["sub_filename"]: "mihomo.yaml",
-    }
-    for path, key in expected.items():
-        if not path.exists() or path.read_text(encoding="utf-8") != data[key]:
-            raise RuntimeError(f"deployed file differs from rendered source: {path}")
+    check_rendered_files(data, settings["sub_filename"], allow_coupled_unit=allow_coupled_unit)
+    if not allow_coupled_unit:
+        check_service_dependencies()
     stat = CADDY_SNIPPET.stat()
     if stat.st_mode & 0o777 != 0o640 or stat.st_uid != 0 or stat.st_gid != grp.getgrnam("caddy").gr_gid:
         raise RuntimeError("Caddy subscription token config must be root:caddy 0640; run update-rules")
@@ -352,6 +373,30 @@ def check(*, allow_pending: bool = False) -> None:
         if subscription_status(xray, old) != "404":
             raise RuntimeError("old Xray-only subscription is still available")
     print("001 Xray + HY services, HY TCP/UDP/auth, combined YAML and HTTPS subscription verified")
+
+
+def decouple_services() -> None:
+    """Migrate the exact old unit without restarting either running service."""
+    if PENDING.exists():
+        restore_pending()
+    check(allow_coupled_unit=True)
+    state = read_state()
+    candidate = render_service_unit()
+    if UNIT.read_text(encoding="utf-8") == candidate:
+        check_service_dependencies()
+        print("HY2 service dependencies already decoupled")
+        return
+    begin_change("decouple-services", [UNIT], state["settings"])
+    try:
+        atomic_write(UNIT, candidate.encode(), 0o644)
+        run("systemd-analyze", "verify", str(UNIT), timeout=30, capture=True)
+        run("systemctl", "daemon-reload")
+        check(allow_pending=True)
+        PENDING.unlink()
+    except Exception:
+        restore_pending()
+        raise
+    print("HY2 now weakly starts Caddy; running services and ACME state preserved")
 
 
 def install(config_path: Path) -> None:
@@ -535,7 +580,8 @@ def tune_network() -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("install", "check", "show", "finalize", "update-rules", "tune-network"))
+    parser.add_argument("command", choices=("install", "check", "show", "finalize", "update-rules", "tune-network",
+                                            "decouple-services"))
     parser.add_argument("--config", type=Path, default=ROOT / "config.example.json")
     args = parser.parse_args()
     require_server()
@@ -551,6 +597,8 @@ def main() -> None:
             update_rules()
         elif args.command == "tune-network":
             tune_network()
+        elif args.command == "decouple-services":
+            decouple_services()
         else:
             if PENDING.exists():
                 raise RuntimeError("deployment is pending")

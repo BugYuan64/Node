@@ -39,6 +39,20 @@ class RendererTests(unittest.TestCase):
         self.state = Path(self.temp.name) / "deploy.env"
         self.state.write_text(XRAY_TEXT, encoding="utf-8")
 
+    def test_hy_unit_weakly_starts_caddy_and_preserves_acme_route(self):
+        data = render(load_xray_state(self.state), validate_settings(SETTINGS), legacy=False)
+        unit = data["hy2-mihomo.service"]
+        self.assertIn("After=network-online.target caddy.service\n", unit)
+        self.assertIn("Wants=network-online.target caddy.service\n", unit)
+        self.assertNotIn("Requires=", unit)
+        self.assertNotIn("BindsTo=", unit)
+        self.assertNotIn("PartOf=", unit)
+        self.assertIn("reverse_proxy 127.0.0.1:18080", data["caddy.caddy"])
+        acme = yaml.safe_load(data["hysteria.yaml"])["acme"]
+        self.assertEqual(acme["listenHost"], "127.0.0.1")
+        self.assertEqual(acme["http"]["altPort"], 18080)
+        self.assertEqual(acme["dir"], "/var/lib/hy2-mihomo/acme")
+
     def test_both_nodes_and_two_groups_in_one_profile(self):
         data = render(load_xray_state(self.state), validate_settings(SETTINGS), legacy=False)
         config = yaml.safe_load(data["mihomo.yaml"])

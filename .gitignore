@@ -1,7 +1,8 @@
 deploy.env
-/build/*
-!/build/config.yaml
-!/build/subscription-url.txt
+# Generated profiles, subscription URLs, caches and exports stay local.
+/build/
+# Optional private inputs and backups; never commit real credentials.
+/private/
 .playwright-mcp/
 *.bak
 __pycache__/

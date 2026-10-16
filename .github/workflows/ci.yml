@@ -1,0 +1,80 @@
+name: Deployment checks
+
+"on":
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install -r requirements-test.txt
+      - name: Run deployment regression tests
+        run: python -B -m unittest discover -s cohost/tests -v
+
+  mihomo-config:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -r requirements-test.txt
+      - name: Validate a synthetic profile with the pinned mihomo binary
+        shell: bash
+        run: |
+          python -B - <<'PY'
+          from pathlib import Path
+          import subprocess
+          import tempfile
+          import yaml
+          from cohost.deploy import ASSETS, download
+          from cohost.render import load_xray_state, render
+          from cohost.tests.test_render import SETTINGS, XRAY_TEXT
+
+          with tempfile.TemporaryDirectory(prefix="cohost-ci-") as temporary:
+              directory = Path(temporary)
+              _, _, asset, digest = ASSETS["x86_64"]
+              binary = directory / "mihomo"
+              download("https://github.com/MetaCubeX/mihomo/releases/download/v1.19.32/" + asset,
+                       digest, binary, compressed=True)
+              state = directory / "deploy.env"
+              state.write_text(XRAY_TEXT, encoding="utf-8")
+              profile = render(load_xray_state(state), SETTINGS, legacy=False)["mihomo.yaml"]
+              config = directory / "config.yaml"
+              config.write_text(profile, encoding="utf-8")
+              command = [str(binary), "-t", "-d", str(directory), "-f", str(config)]
+              subprocess.run(command, check=True, timeout=180)
+              invalid = yaml.safe_load(profile)
+              invalid["proxies"][0]["port"] = "invalid-port"
+              config.write_text(yaml.safe_dump(invalid), encoding="utf-8")
+              rejected = subprocess.run(command, capture_output=True, timeout=30)
+              if rejected.returncode == 0:
+                  raise RuntimeError("mihomo accepted the intentionally invalid profile")
+              print("Synthetic profile accepted; invalid profile rejected; no production credentials used")
+          PY

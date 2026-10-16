@@ -325,12 +325,19 @@ http://{hy_domain} {{
     }}
 }}
 '''
-    unit = '''# managed-by: cohost-proxy
+    return {"hysteria.yaml": hy_config, "mihomo.yaml": mihomo, "caddy.caddy": caddy,
+            "hy2-mihomo.service": render_service_unit()}
+
+
+def render_service_unit(*, coupled: bool = False) -> str:
+    """The coupled variant is only for recognizing an existing migration source."""
+    dependencies = ("Wants=network-online.target\nRequires=caddy.service" if coupled
+                    else "Wants=network-online.target caddy.service")
+    return f'''# managed-by: cohost-proxy
 [Unit]
 Description=Hysteria2 proxy on 001
 After=network-online.target caddy.service
-Wants=network-online.target
-Requires=caddy.service
+{dependencies}
 
 [Service]
 Type=simple
@@ -348,4 +355,3 @@ PrivateTmp=true
 [Install]
 WantedBy=multi-user.target
 '''
-    return {"hysteria.yaml": hy_config, "mihomo.yaml": mihomo, "caddy.caddy": caddy, "hy2-mihomo.service": unit}
