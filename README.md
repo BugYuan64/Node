@@ -9,7 +9,7 @@
 | 路径 | 实际用途 |
 | --- | --- |
 | .gitattributes | 文本统一LF，Windows批处理检出为CRLF，二进制不转换 |
-| .gitignore | 排除私有订阅、密钥、运行状态及临时缓存 |
+| .gitignore | 放行最终订阅配置与URL，排除密钥、运行状态及临时缓存 |
 | cohost/deploy.py | 安装迁移、订阅原子更新、服务检查、网络调参与事务恢复 |
 | cohost/render.py | 生成 HY2、Caddy、systemd 和完整 mihomo 配置 |
 | cohost/config.example.json | 不含真实凭据的配置模板 |
@@ -17,7 +17,7 @@
 | cohost/verify_client.py | 客户端 DNS、分流、双节点出口、隔离故障切换验收 |
 | cohost/measure.py | 使用隔离 mihomo 与匿名 curl 复测两条线路 |
 | cohost/tests/ | 凭据、配置契约、网络参数和回退顺序的回归测试 |
-| build/ | 仅保留最终 config.yaml 和 subscription-url.txt；含凭据，禁止公开 |
+| build/ | 最终 config.yaml 和 subscription-url.txt 随私有仓库保存；含凭据，禁止公开 |
 | 项目最终架构.md | 组件、接口、数据流、技术选择与边界 |
 | 阶段步骤实现.md | 实施顺序、交付物、完成标准和当前状态 |
 
@@ -80,4 +80,4 @@ python -X utf8 -B cohost/measure.py --config build/config.yaml --mihomo 'D:\Clas
 
 ## Git仓库
 
-仓库保存部署源码、测试、配置模板和文档。build中的真实订阅配置与URL、SSH信息、私钥和运行状态不提交。克隆后可在已有VPS运行deploy.py show获取订阅URL，再按需准备本机私有build资料进行客户端验证。
+私有仓库保存部署源码、测试、配置模板、文档，以及build/config.yaml和build/subscription-url.txt中的实际订阅资料。克隆后可直接使用该URL订阅，或使用配置文件进行客户端验证。build仅放行这两个最终文件，其他生成文件与缓存继续忽略；SSH信息、私钥和运行状态不提交。订阅配置与URL含访问凭据，仓库应保持私有。

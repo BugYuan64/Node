@@ -1,5 +1,7 @@
 deploy.env
-build/
+/build/*
+!/build/config.yaml
+!/build/subscription-url.txt
 .playwright-mcp/
 *.bak
 __pycache__/
