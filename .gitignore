@@ -1,0 +1,17 @@
+deploy.env
+build/
+.playwright-mcp/
+*.bak
+__pycache__/
+*.pyc
+.ssh-known-hosts
+.ssh-deploy-config
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+state.json
+pending.json

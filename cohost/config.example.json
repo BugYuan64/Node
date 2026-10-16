@@ -1,0 +1,11 @@
+{
+  "hy_domain": "hy.13-193-30-180.sslip.io",
+  "hy_port": 8443,
+  "hy_password": "",
+  "sub_token": "",
+  "sub_filename": "proxy-001.yaml",
+  "hy_node": "proxy-HY",
+  "probe_url": "https://www.gstatic.com/generate_204",
+  "probe_interval": 60,
+  "probe_tolerance": 50
+}

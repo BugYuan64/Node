@@ -1,0 +1,33 @@
+# Keep Linux deployment files and repository text on LF.
+* text=auto eol=lf
+
+.gitattributes text eol=lf
+.gitignore text eol=lf
+*.py text eol=lf
+*.sh text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.ps1 text eol=lf
+
+# Windows command scripts use CRLF when checked out.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Never apply text conversion to binary assets or caches.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.7z binary
+*.exe binary
+*.dll binary
+*.db binary
+*.sqlite binary
+*.mmdb binary
+*.dat binary
