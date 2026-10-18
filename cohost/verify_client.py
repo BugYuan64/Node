@@ -13,6 +13,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 
 import yaml
 
@@ -160,6 +161,29 @@ def verify(config_path: Path, mihomo: Path, data_dir: Path, expected_ip: str,
                     if not matched or address != expected_ip:
                         raise RuntimeError(f"unexpected proxy exit for {node}: {address}")
                     print(f"{node}: PROXY, exit={address}")
+                    for url, key, download in (
+                        ("https://services.googleapis.cn/", ("DomainSuffix", "googleapis.cn"), False),
+                        ("https://play.googleapis.com/", ("DomainSuffix", "googleapis.com"), False),
+                        ("https://redirector.gvt1.com/", ("DomainSuffix", "gvt1.com"), False),
+                        ("https://dl.google.com/android/repository/repository2-1.xml",
+                         ("DomainSuffix", "google.com"), True),
+                    ):
+                        before = counts()
+                        try:
+                            with via.open(url, timeout=20) as response:
+                                body = response.read() if download else response.read(64)
+                                if download:
+                                    root = ET.fromstring(body)
+                                    if response.status != 200 or not root.tag.endswith("}sdk-repository"):
+                                        raise RuntimeError("unexpected Google repository download")
+                        except urllib.error.HTTPError as error:
+                            # A root URL has no API resource; 404 still proves TLS/HTTP reachability.
+                            if download or error.code != 404:
+                                raise
+                        route, hits = counts()[key]
+                        if route != "PROXY" or hits <= before[key][1]:
+                            raise RuntimeError(f"Google endpoint did not hit PROXY: {key[1]}")
+                        print(f"{node}: Google {key[1]} PROXY" + (", complete XML download" if download else ""))
                 print("Proxy group graph: no cycles")
             finally:
                 process.terminate()

@@ -1,6 +1,6 @@
 # 001 双协议代理部署
 
-更新：2026-10-16。001（13.193.30.180，Ubuntu24.04）提供Xray VLESS/WebSocket/TLS和Hysteria2/QUIC，并通过一条HTTPS mihomo YAML订阅进行国内直连、海外代理和协议自动选择。两协议共用服务器与出口，无法隔离整机或共同网络故障。
+更新：2026-10-18。001（13.193.30.180，Ubuntu24.04）提供Xray VLESS/WebSocket/TLS和Hysteria2/QUIC，并通过一条HTTPS mihomo YAML订阅进行国内直连、海外代理和协议自动选择。支持Clash Verge及Clash Meta for Android；两协议共用服务器与出口，无法隔离整机或共同网络故障。
 
 ## 技术与目录
 
@@ -50,13 +50,33 @@ decouple-services精确迁移旧HY unit，只写unit并daemon-reload，不重启
 
 ## 分流、DNS与服务独立性
 
-当前50条规则按入口/局域网、明确国内域名及GeoSite CN、已识别海外域名、GeoIP CN、最终PROXY顺序匹配。国内使用阿里/腾讯DoH，海外经PROXY使用Cloudflare/Google DoH；fake-ip保留域名匹配。地理数据每天尝试更新，需要按准确域名维护例外。
+当前62条规则按入口/局域网、Google服务例外、明确国内域名及GeoSite CN、已识别海外域名、GeoIP CN、最终PROXY顺序匹配。Google服务与下载域名（包括services.googleapis.cn、Google API、gstatic、gvt和Play下载CDN）在.cn/GeoSite CN之前走PROXY，DNS也优先使用经PROXY的Cloudflare/Google DoH。其他国内域名仍使用阿里/腾讯DoH；fake-ip保留域名匹配。地理数据每天尝试更新，需要按准确域名维护例外。
 
 自动组60秒检查、4秒超时、50ms容差并要求HTTP204；PROXY没有DIRECT选项。选择变化作用于后续连接，已有长连接需重建。通用204健康不代表具体应用或长连接一直可用。
 
 HY通过Wants弱依赖启动Caddy，保留After排序。Caddy显式停止/重启不再通过强依赖连带停止HY；已有有效证书时，HY数据路径独立。首次签发/续期仍需要Caddy从TCP80转发到HY回环18080，不能删除该链路。tune-network仍会按维护操作显式重启两服务。
 
 Clash Verge的独立DNS覆写应关闭以使用订阅DNS；全局IPv6开关可能覆盖YAML对应字段。当前不全局屏蔽UDP443。
+
+## Android 16 / CMFA 2.11.35
+
+更新已有proxy-001.yaml订阅，再停止并重新启动代理，使旧连接和DNS状态重新建立。网络设置按以下基线核对：
+
+| 设置 | 建议值与原因 |
+| --- | --- |
+| 自动路由系统流量 | 开启，使用VpnService接管流量 |
+| DNS劫持 | 开启，使用订阅的分流DNS；系统私人DNS先设为关闭进行排查 |
+| 允许应用绕过 | **关闭**，避免Google组件主动绕开VPN；与绕过私有网络是独立选项 |
+| 访问控制模式 | 允许所有应用，包含Play商店、Play服务和下载管理器 |
+| 绕过私有网络 | 可保留开启，局域网直连；不等于允许应用绕过VPN |
+| 允许IPv6 | 关闭，与本订阅IPv4基线一致 |
+| 系统代理 / Stack Mode | 初次保留现值；仅在更新订阅后仍异常时逐项对照，避免同时修改多个条件 |
+
+移动数据下若自动选择仍高延迟，将PROXY暂时手选proxy-Xray（TCP443）对照proxy-HY（UDP8443），分别重新打开商店尝试同一个小应用。桌面测得的协议耗时不能代替手机运营商路径；短小204探测也不能证明大文件下载稳定，不根据桌面测量强制更换手机默认协议。
+
+商店仍显示旧的“等待下载”时，先取消失败任务、强行停止Play商店并清除其缓存，重新打开；确认商店的应用下载偏好允许当前移动网络。无需先清除Google账号或Play服务全部数据。订阅无法替手机关闭应用绕过、修改访问控制或系统私人DNS。
+
+依据：[CMFA 2.11.35 VPN实现](https://github.com/MetaCubeX/ClashMetaForAndroid/blob/v2.11.35/service/src/main/java/com/github/kr328/clash/service/TunService.kt)、[mihomo DNS策略](https://wiki.metacubex.one/config/dns/)、[CMFA Google Play问题讨论](https://github.com/MetaCubeX/ClashMetaForAndroid/discussions/813)。CMFA此版本的Android VPN MTU由客户端代码固定为9000，不能承诺订阅中的tun.mtu能够修改它。本次未添加未经手机实测的MTU、固定HY带宽或全局UDP443封锁。
 
 ## 验证与CI
 
@@ -70,9 +90,11 @@ python -X utf8 -B cohost/verify_client.py --config build/config.yaml --mihomo 'D
 python -X utf8 -B cohost/verify_client.py --config build/config.yaml --mihomo 'D:\Clash Verge\verge-mihomo.exe' --expected-ip 13.193.30.180 --unavailable-node proxy-Xray
 ~~~
 
-故障注入只改变隔离测试进程，不停止生产节点。measure.py可按需测公开匿名目标，不等于浏览器整页或真实应用长连接测试。
+verify_client.py还逐协议核对services.googleapis.cn、Play API、gvt1下载入口的PROXY命中，以及完整Google公开仓库XML下载。API根路径的404只作为TLS/HTTP可达证据，不能冒充已登录商店的安装成功。故障注入只改变隔离测试进程，不停止生产节点。measure.py可按需测公开匿名目标，不等于浏览器整页或真实应用长连接测试。
 
-本轮Windows与Ubuntu共23项回归通过；Linux固定版本mihomo接受虚构配置并拒绝故意损坏配置。001实际停止/重启Caddy时HY PID不变，停机期间HY TCP/UDP通过；恢复后服务、可信订阅、错误token404及外部双协议出口、DNS和分流通过。迁移未改10份私有配置及证书内容。没有执行生产证书重签或整机重启演练。
+2026-10-18 Android修复的本机25项回归通过，新增测试先复现Google规则/DNS例外缺失，再由修复通过；隔离客户端的国内分流、双协议出口、Google规则命中及完整公开下载通过。001发布后，用户按更新订阅、关闭应用绕过并重连的步骤进行手机移动数据复测，确认Google Play已可以正常下载/更新。此结果为手机端反馈；尚无修复后的手机延迟数值，不据此宣称延迟已经降低。
+
+2026-10-16历史验收：Windows与Ubuntu共23项回归通过；Linux固定版本mihomo接受虚构配置并拒绝故意损坏配置。001实际停止/重启Caddy时HY PID不变，停机期间HY TCP/UDP通过；恢复后服务、可信订阅、错误token404及外部双协议出口、DNS和分流通过。迁移未改10份私有配置及证书内容。没有执行生产证书重签或整机重启演练。
 
 CI在Ubuntu24.04上运行Python3.10/3.13单元测试，以及固定版本/下载摘要的mihomo虚构配置校验；无生产凭据、制品上传或自动部署。真实运行结论以[GitHub Actions](https://github.com/BugYuan64/Node/actions)中对应提交为准。
 
@@ -80,4 +102,4 @@ CI在Ubuntu24.04上运行Python3.10/3.13单元测试，以及固定版本/下载
 
 源码只分发程序、虚构测试凭据、空输入模板、CI和必要文档。build/、private/、密钥及运行状态不提交；git add -f或复制到其他目录仍可绕过忽略。Git忽略不提供加密或磁盘访问控制，完整目录备份也包含私有文件。
 
-本轮按授权从Git历史移除曾提交的build/config.yaml和build/subscription-url.txt，并清理独立分析报告及临时资料。已分发的旧克隆、GitHub缓存或第三方副本不由分支历史重写自动撤回；旧克隆应重新克隆，避免把旧历史推回。线上凭据未轮换，历史清理不使旧凭据失效。服务器有效证书和私有状态保留；旧版备份与已完成事务快照由经逐文件校验的当前部署快照替代，位置及清理清单见[001部署文件目录](001部署文件目录.md)。
+10月16日按授权从Git历史移除曾提交的build/config.yaml和build/subscription-url.txt，并清理独立分析报告及临时资料。已分发的旧克隆、GitHub缓存或第三方副本不由分支历史重写自动撤回；旧克隆应重新克隆，避免把旧历史推回。线上凭据未轮换，历史清理不使旧凭据失效。服务器有效证书和私有状态保留；10月16日整套基线及10月18日更新前回退包分别保留，位置及历史清理清单见[001部署文件目录](001部署文件目录.md)。

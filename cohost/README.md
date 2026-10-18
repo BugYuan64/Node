@@ -42,7 +42,7 @@ tune-network将UDP收发上限提升到至少7340032字节并启用TCP BBR，保
 
 状态和pending在/etc/cohost-proxy；事务快照在/var/backups/cohost-proxy。重新执行对应install、finalize、update-rules、tune-network或decouple-services会先恢复未完成事务。不要手工删除pending及其备份；恢复失败会保留pending。
 
-依赖迁移中断恢复仅还原unit并daemon-reload，不停止数据进程。001清理旧版资料后，只保留/var/backups/cohost-proxy/current.tar.gz及current.tar.gz.sha256（均0600）作为当前部署快照；快照含源码、二进制、服务配置、私有状态、证书与内部校验清单。需要恢复时先校验摘要并检查内部清单，协调服务窗口后恢复配套文件、属主权限和服务依赖，避免仅恢复unit造成渲染漂移。
+依赖迁移中断恢复仅还原unit并daemon-reload，不停止数据进程。001在10月16日清理旧版资料后保留/var/backups/cohost-proxy/current.tar.gz及current.tar.gz.sha256（均0600）作为当时的整套部署基线；快照含源码、二进制、服务配置、私有状态、证书与内部校验清单。需要恢复时先校验摘要并检查内部清单，协调服务窗口后恢复配套文件、属主权限和服务依赖，避免仅恢复unit造成渲染漂移。10月18日新增的变更前备份及发布记录见下文，不删除本次事务快照。
 
 本次在无pending且当前快照逐文件内容校验成功后，删除已完成事务的历史快照及旧版回退包。以后产生的新pending及其引用备份仍必须保留到对应事务恢复/完成；不要套用本次清单盲目清理。当前快照含证书、密码及令牌，不进入Git或公开日志。尚未演练独立机器恢复或重启持久性；Git源码和本机YAML不能替代私有快照及系统环境准备。完整目录见[001部署文件目录](https://github.com/BugYuan64/Node/blob/main/001部署文件目录.md)。
 
@@ -50,6 +50,10 @@ tune-network将UDP收发上限提升到至少7340032字节并启用TCP BBR，保
 
 本机build/subscription-url.txt和build/config.yaml全部由Git忽略。新克隆从私有备份或已验证SSH上的show恢复URL，通过可信HTTPS订阅；不从旧提交分发凭据。GUI使用规则模式，关闭独立DNS覆写；全局IPv6开关可能覆盖订阅值。
 
-verify_client.py在隔离进程中检查DNS、规则、双协议出口；--unavailable-node只改变测试端点。measure.py以匿名curl按需测公开目标；没有新增后台监控。服务器日常运行需要deploy.py、render.py、verify.py及配置模板；客户端验证工具与测试保留在源码仓库供验收和CI使用。
+2026-10-18订阅增加Google服务/下载域名的代理和DNS例外，优先于.cn及GeoSite CN；原URL、两协议和国内直连保留。CMFA手机需更新订阅、关闭“允许应用绕过”并重连，其他设置及移动网络对照步骤见根README的Android章节。手机本地VpnService设置不能由服务器订阅自动修改。
+
+本次变更前回退包为/var/backups/cohost-proxy/android-before-20261018T052314Z.tar.gz及.sha256，含旧渲染器、验收工具、部署README、订阅和Caddy片段，已逐文件核验且仅root可读；android-update-20261018T052314Z.json记录更新摘要与不变性检查。原current.tar.gz仍是10月16日的整套恢复基线，未包含本次Google规则，恢复后需重新同步当前源码并update-rules。
+
+verify_client.py在隔离进程中检查DNS、规则、双协议出口，以及Google服务代理命中和完整公开XML下载；--unavailable-node只改变测试端点。公开下载测试不等同于手机登录后的Play安装验收。measure.py以匿名curl按需测公开目标；没有新增后台监控。服务器日常运行需要deploy.py、render.py、verify.py及配置模板；客户端验证工具与测试保留在源码仓库供验收和CI使用。
 
 历史清理不使旧凭据失效，也不撤回旧克隆或缓存。线上凭据本轮未轮换；不要把旧历史重新推回。Git忽略不等于加密，URL、YAML、私有输入与恢复包都应受控保存。

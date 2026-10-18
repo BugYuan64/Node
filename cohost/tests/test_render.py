@@ -123,6 +123,33 @@ class RendererTests(unittest.TestCase):
         self.assertTrue(all("#PROXY" not in url for url in dns["proxy-server-nameserver"]))
         self.assertEqual(dns["nameserver-policy"]["geosite:cn,private"], dns["direct-nameserver"])
 
+    def test_google_play_routes_before_china_and_ip_fallbacks(self):
+        config = yaml.safe_load(render(load_xray_state(self.state), SETTINGS, legacy=False)["mihomo.yaml"])
+        rules = config["rules"]
+        # Android's China service endpoint must not hit the broad .cn DIRECT rule.
+        for suffix in ("googleapis.cn", "google.cn", "google.com", "googleapis.com",
+                       "gstatic.com", "gvt0.com", "gvt1.com", "gvt2.com", "gvt3.com",
+                       "googleusercontent.com", "xn--ngstr-lra8j.com"):
+            rule = f"DOMAIN-SUFFIX,{suffix},PROXY"
+            self.assertIn(rule, rules)
+            self.assertLess(rules.index(rule), rules.index("DOMAIN-SUFFIX,cn,DIRECT"))
+        self.assertLess(rules.index("GEOSITE,google,PROXY"), rules.index("GEOSITE,CN,DIRECT"))
+
+    def test_google_dns_exceptions_precede_domestic_policy(self):
+        config = yaml.safe_load(render(load_xray_state(self.state), SETTINGS, legacy=False)["mihomo.yaml"])
+        dns = config["dns"]
+        policies = dns["nameserver-policy"]
+        keys = list(policies)
+        for suffix in ("googleapis.cn", "google.cn", "google.com", "googleapis.com",
+                       "gstatic.com", "gvt0.com", "gvt1.com", "gvt2.com", "gvt3.com",
+                       "googleusercontent.com", "xn--ngstr-lra8j.com"):
+            key = f"+.{suffix}"
+            self.assertIn(key, policies)
+            self.assertEqual(policies[key], dns["nameserver"])
+            self.assertLess(keys.index(key), keys.index("geosite:cn,private"))
+        self.assertEqual(policies["geosite:google"], dns["nameserver"])
+        self.assertLess(keys.index("geosite:google"), keys.index("geosite:cn,private"))
+
     def test_unknown_china_ip_can_resolve_and_shared_cdns_are_not_forced_direct(self):
         config = yaml.safe_load(render(load_xray_state(self.state), validate_settings(SETTINGS), legacy=False)["mihomo.yaml"])
         rules = config["rules"]

@@ -17,6 +17,12 @@ UUID = re.compile(r"^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$")
 FILENAME = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}\.yaml$")
 STATE_KEYS = ("PROXY_DOMAIN", "SUB_DOMAIN", "NODE_NAME", "SUB_FILENAME", "XRAY_PORT", "VLESS_UUID", "SUB_TOKEN", "WS_TOKEN")
 SETTING_KEYS = ("hy_domain", "hy_port", "hy_password", "sub_token", "sub_filename", "hy_node", "probe_url", "probe_interval", "probe_tolerance")
+# Keep Android Google service/CDN exceptions ahead of broad China routing and DNS.
+GOOGLE_PROXY_SUFFIXES = (
+    "googleapis.cn", "google.cn", "google.com", "googleapis.com", "gstatic.com",
+    "gvt0.com", "gvt1.com", "gvt2.com", "gvt3.com", "googleusercontent.com",
+    "xn--ngstr-lra8j.com",
+)
 
 
 def quote(value: str) -> str:
@@ -119,6 +125,8 @@ def render(xray: dict[str, str], settings: dict, *, legacy: bool) -> dict[str, s
     password = quote(settings["hy_password"])
     server_ip = sslip_ipv4(x_domain)
     server_ip_rule = f"  - IP-CIDR,{server_ip}/32,DIRECT,no-resolve\n" if server_ip else ""
+    google_dns = "".join(f"    {quote('+.' + suffix)}: *foreign-dns\n" for suffix in GOOGLE_PROXY_SUFFIXES)
+    google_rules = "".join(f"  - DOMAIN-SUFFIX,{suffix},PROXY\n" for suffix in GOOGLE_PROXY_SUFFIXES)
     hy_config = f'''listen: :{settings["hy_port"]}
 acme:
   domains:
@@ -167,10 +175,11 @@ dns:
   direct-nameserver: &domestic-dns
     - https://dns.alidns.com/dns-query
     - https://doh.pub/dns-query
-  nameserver:
+  nameserver: &foreign-dns
     - https://1.1.1.1/dns-query#PROXY
     - https://8.8.8.8/dns-query#PROXY
   nameserver-policy:
+{google_dns}    'geosite:google': *foreign-dns
     'geosite:cn,private': *domestic-dns
     '+.cn': *domestic-dns
     '{x_domain}': *domestic-dns
@@ -236,6 +245,7 @@ rules:
   - IP-CIDR6,fc00::/7,DIRECT,no-resolve
   - IP-CIDR6,fe80::/10,DIRECT,no-resolve
   - GEOSITE,private,DIRECT
+{google_rules}  - GEOSITE,google,PROXY
   - DOMAIN-SUFFIX,cn,DIRECT
   - DOMAIN,cn.bing.com,DIRECT
   - DOMAIN-SUFFIX,126.com,DIRECT
