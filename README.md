@@ -1,6 +1,8 @@
 # 001 双协议代理部署
 
-更新：2026-10-18。001（13.193.30.180，Ubuntu24.04）提供Xray VLESS/WebSocket/TLS和Hysteria2/QUIC，并通过一条HTTPS mihomo YAML订阅进行国内直连、海外代理和协议自动选择。支持Clash Verge及Clash Meta for Android；两协议共用服务器与出口，无法隔离整机或共同网络故障。
+更新：2026-10-20。001（13.193.30.180，Ubuntu24.04）提供Xray VLESS/WebSocket/TLS和Hysteria2/QUIC，并通过一条HTTPS mihomo YAML订阅进行国内直连、海外代理和协议自动选择。支持Clash Verge及Clash Meta for Android；两协议共用服务器与出口，无法隔离整机或共同网络故障。
+
+2026-10-20公网IP重新绑定至新实例后，已恢复三项服务、原订阅URL和认证参数，重新签发三个域名的证书。新源码目录为`/home/ubuntu/cohost-proxy-20261020`，服务自启及服务端`check`通过，当前为`final`、无pending。用户放行云防火墙后，公网可信HTTPS订阅返回200并与本机4711字节配置摘要一致；电脑隔离mihomo的DNS、国内直连、双协议出口、Google完整下载及两个方向自动切换均通过，出口均为13.193.30.180。新实例手机Wi-Fi/移动数据验收待用户实测；下文10月16日、18日手机结果属于原实例历史验收。
 
 ## 技术与目录
 
@@ -26,6 +28,17 @@
 
 当前安装器用于已有Xray/Caddy的Ubuntu24.04 x86_64/aarch64，要求root/sudo、Python3、systemd、curl和有效域名。不是空白VPS安装器。开放TCP80/443和UDP8443；TCP80用于HTTP-01，程序不修改云防火墙或SSH。
 
+Lightsail当前实例的Networking → IPv4 firewall应保留以下入站规则（EC2对应安全组入站规则）：
+
+| 用途 | 协议 | 端口 | 来源 |
+| --- | --- | --- | --- |
+| SSH管理 | TCP | 22 | 管理者公网IP/32；按需保留Lightsail浏览器SSH入口 |
+| ACME证书签发/续期 | TCP | 80 | 0.0.0.0/0 |
+| HTTPS订阅与Xray | TCP | 443 | 0.0.0.0/0 |
+| Hysteria2 | UDP | 8443 | 0.0.0.0/0 |
+
+当前节点使用IPv4，不要求IPv6规则。不要开放回环10000、18080、2019或客户端控制端口。UDP443仅用于Caddy可选HTTP/3，不是本订阅必需端口。新实例UFW未启用、nftables规则为空；本次未启用额外主机防火墙。云防火墙操作见[AWS官方说明](https://docs.aws.amazon.com/lightsail/latest/userguide/amazon-lightsail-editing-firewall-rules.html)。
+
 Xray状态为/etc/xray-mihomo-deployer/deploy.env，双协议状态为/etc/cohost-proxy/state.json。三域名分别用于Xray身份、HY身份和订阅；节点固定IPv4，保留SNI、Host和证书校验。不要用空白模板覆盖已有状态。
 
 客户端URL保存在本机build/subscription-url.txt，完整配置为build/config.yaml。新克隆不含这两个私有文件，需从自己的受控备份恢复，或通过已验证的SSH连接执行服务器show命令，私下取得HTTPS URL并下载/导入。客户端使用规则模式，PROXY选择自动组或手选协议。
@@ -37,7 +50,7 @@ Xray状态为/etc/xray-mihomo-deployer/deploy.env，双协议状态为/etc/cohos
 远程Ubuntu，当前源码目录：
 
 ~~~bash
-cd /home/ubuntu/cohost-proxy-20261015
+cd /home/ubuntu/cohost-proxy-20261020
 sudo python3 -B deploy.py decouple-services
 sudo python3 -B deploy.py update-rules
 sudo python3 -B deploy.py check
@@ -47,6 +60,8 @@ sudo python3 -B deploy.py show
 decouple-services精确迁移旧HY unit，只写unit并daemon-reload，不重启HY/Caddy，重复执行无变更；已有staged部署也可先迁移再finalize。当前001已完成迁移。凭据、订阅URL、证书和ACME转发不变。迁移/规则更新失败或中断保留快照及pending，重新运行对应命令先恢复；详见[部署维护说明](cohost/README.md)。
 
 按需执行sudo python3 -B deploy.py tune-network：TCP BBR及至少7MiB UDP收发上限。首次应用可能重启Caddy/HY，参数相同的重复调用不重启；它与依赖迁移是不同操作。
+
+新实例本轮未执行网络调优，实查拥塞控制为cubic，UDP收发上限各4MiB。公网端口放行并通过电脑隔离客户端验收后，已执行finalize及最终check，原双协议订阅URL不变。电脑Clash Verge、手机CMFA可更新原订阅并重连，分别手选proxy-Xray和proxy-HY测试后恢复自动选择；手机还需在Wi-Fi、移动数据下各验收一次。电脑测试未修改GUI当前配置选择。
 
 ## 分流、DNS与服务独立性
 
