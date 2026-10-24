@@ -1,5 +1,11 @@
 # 部署与维护
 
+2026-10-25已同步HY拨号兼容修复：`render.py`为HY节点生成`dialer-proxy: DIRECT`，只控制连接HY服务器的拨号路径，业务流量仍通过HY；不绑定固定网卡。原URL、认证、服务配置和证书保持。
+
+本轮为遵守用户手测要求，采用一次性受控发布：核对旧源码摘要及配置漂移，复用部署器快照、原子写入、配置校验和可信订阅检查，不调用会启动代理探测的完整`check`/`update-rules`。26项离线回归通过，服务PID保持、无pending；此次发布后的业务验收由用户完成。日常完整检查仍会运行短时HY探测。
+
+Clash Verge托管内核应通过客户端内置流程更新/重启。此次直接调用内核`/restart`曾留下服务管理器无法接管的进程并造成端口冲突；已清理孤立进程并重启系统服务恢复，不把该问题归因于版本升级。
+
 当前001的Xray、Hysteria2与Caddy共享完整HTTPS订阅。2026-10-20公网IP 13.193.30.180重新绑定新实例后，已恢复三服务、原URL/认证并重签三个域名证书；源码为`/home/ubuntu/cohost-proxy-20261020`。云防火墙放行后，可信公网订阅、电脑隔离mihomo DNS/分流、双协议出口、Google完整下载和双向自动切换通过；已finalize，最终check通过，无pending，三服务active/enabled。手机Wi-Fi/移动数据仍待用户实测。项目结构、客户端用法和验收见[根README](https://github.com/BugYuan64/Node/blob/main/README.md)。
 
 ## 条件与安装

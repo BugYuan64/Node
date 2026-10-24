@@ -67,6 +67,20 @@ class RendererTests(unittest.TestCase):
         self.assertFalse(config["proxies"][0]["skip-cert-verify"])
         self.assertFalse(config["proxies"][1]["skip-cert-verify"])
 
+    def test_hy_transport_uses_direct_dialer_without_pinning_a_network_interface(self):
+        xray = load_xray_state(self.state)
+        for legacy in (False, True):
+            for name in ("proxy-HY", "hy-custom"):
+                with self.subTest(legacy=legacy, node=name):
+                    settings = dict(SETTINGS, hy_node=name)
+                    config = yaml.safe_load(render(xray, settings, legacy=legacy)["mihomo.yaml"])
+                    nodes = {node["name"]: node for node in config["proxies"]}
+                    hy = nodes[name]
+                    self.assertEqual(hy.get("dialer-proxy"), "DIRECT")
+                    self.assertNotIn("dialer-proxy", nodes[xray["NODE_NAME"]])
+                    self.assertNotIn("interface-name", hy)
+                    self.assertNotIn("interface-name", config)
+
     def test_caddy_staging_preserves_legacy_and_final_removes_it(self):
         xray = load_xray_state(self.state)
         settings = validate_settings(SETTINGS)

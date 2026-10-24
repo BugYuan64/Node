@@ -141,6 +141,7 @@ auth:
   type: password
   password: {password}
 '''
+    # HY 端点显式走 DIRECT 拨号器，避免默认拨号路径超时；业务流量仍经 HY，不固定本机网卡。
     mihomo = f'''mixed-port: 7890
 allow-lan: false
 bind-address: 127.0.0.1
@@ -202,6 +203,7 @@ proxies:
         Host: {x_domain}
   - name: {hy_name}
     type: hysteria2
+    dialer-proxy: DIRECT
     server: {sslip_ipv4(hy_domain) or hy_domain}
     port: {settings["hy_port"]}
     password: {password}
