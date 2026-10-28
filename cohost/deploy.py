@@ -584,6 +584,8 @@ def main() -> None:
                                             "decouple-services"))
     parser.add_argument("--config", type=Path, default=ROOT / "config.example.json")
     args = parser.parse_args()
+    if args.command != "show" and (STATE_DIR / "docker.json").exists():
+        raise RuntimeError("Docker owns this deployment; use containers/manage.py check or rollback before legacy maintenance")
     require_server()
     with LOCK.open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

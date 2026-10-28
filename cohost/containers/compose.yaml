@@ -1,0 +1,58 @@
+name: cohost-proxy
+
+x-common: &common
+  network_mode: host
+  restart: unless-stopped
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop: [ALL]
+  tmpfs:
+    - /tmp:size=16m,mode=1777
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  xray:
+    <<: *common
+    image: ${XRAY_IMAGE:?prepare images first}
+    pull_policy: never
+    user: ${XRAY_USER:?prepare users first}
+    command: [run, -config, /usr/local/etc/xray/config.json]
+    environment:
+      XRAY_LOCATION_ASSET: /usr/local/share/xray
+    volumes:
+      - /usr/local/etc/xray:/usr/local/etc/xray:ro
+      - /usr/local/share/xray:/usr/local/share/xray:ro
+  caddy:
+    <<: *common
+    image: ${CADDY_IMAGE:?prepare images first}
+    pull_policy: never
+    # Docker exec clears effective capabilities for a numeric non-root user.
+    # DAC_OVERRIDE permits existing caddy-owned certificate files to stay intact.
+    user: "0:0"
+    cap_add: [NET_BIND_SERVICE, DAC_OVERRIDE]
+    command: [run, --config, /etc/caddy/Caddyfile, --adapter, caddyfile]
+    environment:
+      HOME: /var/lib/caddy
+      XDG_DATA_HOME: /var/lib/caddy/.local/share
+      XDG_CONFIG_HOME: /var/lib/caddy/.config
+    volumes:
+      - /etc/caddy:/etc/caddy:ro
+      - /var/lib/caddy:/var/lib/caddy
+      - /srv/mihomo-sub:/srv/mihomo-sub:ro
+      - /usr/share/caddy:/usr/share/caddy:ro
+  hysteria:
+    <<: *common
+    image: ${HY_IMAGE:?prepare images first}
+    pull_policy: never
+    user: ${HY_USER:?prepare users first}
+    environment:
+      HOME: /var/lib/hy2-mihomo
+    command: [server, -c, /etc/hy2-mihomo/hysteria.yaml]
+    volumes:
+      - /etc/hy2-mihomo:/etc/hy2-mihomo:ro
+      - /var/lib/hy2-mihomo:/var/lib/hy2-mihomo

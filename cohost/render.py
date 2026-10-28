@@ -51,6 +51,10 @@ def load_xray_state(path: Path) -> dict[str, str]:
     for key in ("PROXY_DOMAIN", "SUB_DOMAIN"):
         if not DOMAIN.fullmatch(values[key]):
             raise ValueError(f"invalid Xray {key}")
+    if "SERVER_IP" in values:
+        validate_server_ip(values["SERVER_IP"])
+    if "ROOT_DOMAIN" in values and not DOMAIN.fullmatch(values["ROOT_DOMAIN"]):
+        raise ValueError("invalid ROOT_DOMAIN")
     if values["PROXY_DOMAIN"] == values["SUB_DOMAIN"]:
         raise ValueError("Xray proxy and subscription domains collide")
     if not UUID.fullmatch(values["VLESS_UUID"]):
@@ -102,11 +106,12 @@ def subscription_url(xray: dict[str, str], settings: dict) -> str:
     return f'https://{xray["SUB_DOMAIN"]}/s/{settings["sub_token"]}/{settings["sub_filename"]}'
 
 
-def sslip_ipv4(domain: str) -> str | None:
-    match = re.search(r"(?:^|\.)([0-9]{1,3}(?:-[0-9]{1,3}){3})\.sslip\.io$", domain, re.IGNORECASE)
-    if not match:
-        return None
-    return str(ipaddress.IPv4Address(match.group(1).replace("-", ".")))
+def validate_server_ip(value: str) -> str:
+    address = ipaddress.IPv4Address(value)
+    if (address.is_loopback or address.is_unspecified or address.is_multicast
+            or address.is_link_local or address in ipaddress.ip_network("198.18.0.0/15")):
+        raise ValueError("SERVER_IP must be a routable IPv4 endpoint, not a fake-IP")
+    return str(address)
 
 
 def render(xray: dict[str, str], settings: dict, *, legacy: bool) -> dict[str, str]:
@@ -116,6 +121,10 @@ def render(xray: dict[str, str], settings: dict, *, legacy: bool) -> dict[str, s
     sub_domain = xray["SUB_DOMAIN"]
     if len({hy_domain.lower(), x_domain.lower(), sub_domain.lower()}) != 3:
         raise ValueError("all three domains must be distinct")
+    root_domain = xray.get("ROOT_DOMAIN")
+    if root_domain and (not DOMAIN.fullmatch(root_domain) or root_domain.lower() in
+                        {hy_domain.lower(), x_domain.lower(), sub_domain.lower()}):
+        raise ValueError("ROOT_DOMAIN must be a separate valid domain")
     if settings["sub_token"] == xray["SUB_TOKEN"] or settings["sub_filename"] == xray["SUB_FILENAME"]:
         raise ValueError("new subscription route must differ from the old one")
     if settings["hy_node"] == xray["NODE_NAME"] or xray["NODE_NAME"] in {"DIRECT", "REJECT", "PROXY", "自动选择"}:
@@ -123,7 +132,7 @@ def render(xray: dict[str, str], settings: dict, *, legacy: bool) -> dict[str, s
     x_name = quote(xray["NODE_NAME"])
     hy_name = quote(settings["hy_node"])
     password = quote(settings["hy_password"])
-    server_ip = sslip_ipv4(x_domain)
+    server_ip = validate_server_ip(xray["SERVER_IP"]) if xray.get("SERVER_IP") else None
     server_ip_rule = f"  - IP-CIDR,{server_ip}/32,DIRECT,no-resolve\n" if server_ip else ""
     google_dns = "".join(f"    {quote('+.' + suffix)}: *foreign-dns\n" for suffix in GOOGLE_PROXY_SUFFIXES)
     google_rules = "".join(f"  - DOMAIN-SUFFIX,{suffix},PROXY\n" for suffix in GOOGLE_PROXY_SUFFIXES)
@@ -204,7 +213,7 @@ proxies:
   - name: {hy_name}
     type: hysteria2
     dialer-proxy: DIRECT
-    server: {sslip_ipv4(hy_domain) or hy_domain}
+    server: {server_ip or hy_domain}
     port: {settings["hy_port"]}
     password: {password}
     sni: {hy_domain}
@@ -335,6 +344,16 @@ http://{hy_domain} {{
     handle {{
         respond "Not Found" 404
     }}
+}}
+'''
+    if root_domain:
+        caddy += f'''\n{root_domain} {{
+    tls {{
+        issuer acme {{
+            disable_tlsalpn_challenge
+        }}
+    }}
+    respond "Not Found" 404
 }}
 '''
     return {"hysteria.yaml": hy_config, "mihomo.yaml": mihomo, "caddy.caddy": caddy,

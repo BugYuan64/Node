@@ -10,7 +10,7 @@ from cohost.deploy import prepare_settings
 
 
 BASE = {
-    "hy_domain": "hy.13-193-30-180.sslip.io",
+    "hy_domain": "hy.example.com",
     "hy_port": 8443,
     "hy_password": "",
     "sub_token": "",

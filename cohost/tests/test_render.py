@@ -7,11 +7,12 @@ import yaml
 from cohost.render import load_xray_state, render, validate_settings
 
 
-XRAY_TEXT = """PROXY_DOMAIN=proxy.13-193-30-180.sslip.io
-SUB_DOMAIN=sub.13-193-30-180.sslip.io
+XRAY_TEXT = """PROXY_DOMAIN=proxy.example.com
+SUB_DOMAIN=sub.example.com
 NODE_NAME=proxy-Xray
 SUB_FILENAME=proxy-Xray.yaml
 XRAY_PORT=10000
+SERVER_IP=192.0.2.10
 VLESS_UUID=00000000-0000-4000-8000-000000000001
 SUB_TOKEN=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 WS_TOKEN=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
@@ -20,7 +21,7 @@ CADDY_VERSION=''
 """
 
 SETTINGS = {
-    "hy_domain": "hy.13-193-30-180.sslip.io",
+    "hy_domain": "hy.example.com",
     "hy_port": 8443,
     "hy_password": "c" * 64,
     "sub_token": "d" * 64,
@@ -33,6 +34,33 @@ SETTINGS = {
 
 
 class RendererTests(unittest.TestCase):
+    def test_custom_domain_uses_explicit_endpoint_and_keeps_tls_identity(self):
+        self.state.write_text(XRAY_TEXT, encoding='utf-8')
+        xray = load_xray_state(self.state)
+        xray.update(PROXY_DOMAIN='proxy.example.com', SUB_DOMAIN='sub.example.com')
+        settings = dict(SETTINGS, hy_domain='hy.example.com')
+        config = yaml.safe_load(render(xray, settings, legacy=False)['mihomo.yaml'])
+        self.assertEqual([n['server'] for n in config['proxies']], ['192.0.2.10'] * 2)
+        self.assertEqual(config['proxies'][0]['servername'], 'proxy.example.com')
+        self.assertEqual(config['proxies'][1]['sni'], 'hy.example.com')
+        self.assertIn('IP-CIDR,192.0.2.10/32,DIRECT,no-resolve', config['rules'])
+
+    def test_optional_root_domain_gets_valid_https_without_exposing_subscription(self):
+        self.state.write_text(XRAY_TEXT + 'ROOT_DOMAIN=example.com\n', encoding='utf-8')
+        data = render(load_xray_state(self.state), SETTINGS, legacy=False)
+        self.assertIn('\nexample.com {\n', data['caddy.caddy'])
+        root = data['caddy.caddy'].split('\nexample.com {\n', 1)[1]
+        self.assertNotIn('/s/', root)
+        self.assertNotIn('file_server', root)
+        self.assertIn('404', root)
+
+    def test_endpoint_validation_rejects_fake_ip_and_non_ipv4_input(self):
+        for invalid in ('198.18.1.2', 'example.com', '::1', '0.0.0.0', '127.0.0.1'):
+            with self.subTest(invalid=invalid):
+                self.state.write_text(XRAY_TEXT.replace('SERVER_IP=192.0.2.10', f'SERVER_IP={invalid}'), encoding='utf-8')
+                with self.assertRaises(ValueError):
+                    load_xray_state(self.state)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -97,10 +125,10 @@ class RendererTests(unittest.TestCase):
         config = yaml.safe_load(render(load_xray_state(self.state), validate_settings(SETTINGS), legacy=False)["mihomo.yaml"])
         rules = config["rules"]
         self.assertEqual(rules[:4], [
-            "DOMAIN,proxy.13-193-30-180.sslip.io,DIRECT",
-            "DOMAIN,hy.13-193-30-180.sslip.io,DIRECT",
-            "DOMAIN,sub.13-193-30-180.sslip.io,DIRECT",
-            "IP-CIDR,13.193.30.180/32,DIRECT,no-resolve",
+            "DOMAIN,proxy.example.com,DIRECT",
+            "DOMAIN,hy.example.com,DIRECT",
+            "DOMAIN,sub.example.com,DIRECT",
+            "IP-CIDR,192.0.2.10/32,DIRECT,no-resolve",
         ])
         self.assertLess(rules.index("DOMAIN-SUFFIX,cn,DIRECT"), rules.index("GEOSITE,CN,DIRECT"))
         self.assertLess(rules.index("GEOSITE,CN,DIRECT"), rules.index("GEOIP,CN,DIRECT"))
@@ -121,9 +149,9 @@ class RendererTests(unittest.TestCase):
     def test_fixed_ip_does_not_disable_tls_identity(self):
         config = yaml.safe_load(render(load_xray_state(self.state), validate_settings(SETTINGS), legacy=False)["mihomo.yaml"])
         xray, hy = config["proxies"]
-        self.assertEqual(xray["server"], "13.193.30.180")
-        self.assertEqual(hy["server"], "13.193.30.180")
-        self.assertEqual(xray["servername"], "proxy.13-193-30-180.sslip.io")
+        self.assertEqual(xray["server"], "192.0.2.10")
+        self.assertEqual(hy["server"], "192.0.2.10")
+        self.assertEqual(xray["servername"], "proxy.example.com")
         self.assertEqual(hy["sni"], SETTINGS["hy_domain"])
         self.assertFalse(xray["skip-cert-verify"])
         self.assertFalse(hy["skip-cert-verify"])
