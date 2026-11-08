@@ -11,6 +11,42 @@ from cohost.containers import manage
 
 
 class ContainerSafetyTests(unittest.TestCase):
+    def test_migration_backup_includes_source_from_its_actual_directory(self):
+        class StopBeforeCutover(Exception):
+            pass
+
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            source = temporary / "relocated-project" / "cohost"
+            containers = source / "containers"
+            containers.mkdir(parents=True)
+            (source / "deploy.py").write_bytes(b"source-to-restore")
+            backups = temporary / "backups"
+            backups.mkdir()
+
+            def system_fixture(value):
+                path = temporary / "system" / str(value).lstrip("/\\").replace(":", "")
+                path.mkdir(parents=True, exist_ok=True)
+                return path
+
+            with patch.object(manage, "ROOT", containers), \
+                 patch.object(manage, "MARKER", temporary / "absent-marker"), \
+                 patch.object(manage.legacy, "BACKUP_ROOT", backups), \
+                 patch.object(manage.legacy, "check"), \
+                 patch.object(manage, "prepare_images", return_value={}), \
+                 patch.object(manage, "validate_containers"), \
+                 patch.object(manage, "protected_paths", return_value=[]), \
+                 patch.object(manage, "Path", side_effect=system_fixture), \
+                 patch.object(manage.os, "chmod", side_effect=StopBeforeCutover):
+                with self.assertRaises(StopBeforeCutover):
+                    manage.migrate()
+
+            with manage.tarfile.open(next(backups.glob("*.tar.gz"))) as archive:
+                sources = [member for member in archive.getmembers()
+                           if member.name.endswith("/deploy.py")]
+                self.assertEqual(len(sources), 1, "backup must include the running source directory")
+                self.assertEqual(archive.extractfile(sources[0]).read(), b"source-to-restore")
+
     def test_container_check_rejects_changed_xray_state_before_runtime_checks(self):
         with tempfile.TemporaryDirectory() as directory:
             state = Path(directory) / 'deploy.env'

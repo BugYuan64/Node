@@ -1,39 +1,67 @@
-# 部署与维护
+# 配置与维护
 
-2026-10-25 当前代理位于 `35.73.46.1`，使用 `proxy.wsnbb.shop`、`hy.wsnbb.shop`、`sub.wsnbb.shop`，由 Docker Compose 运行。维护入口为 `/home/ubuntu/cohost-proxy-20261020/containers/`，具体容器和回退命令见 [Docker 说明](containers/README.md)。
-
-```bash
-cd /home/ubuntu/cohost-proxy-20261020/containers
-sudo docker compose ps
-sudo python3 -B manage.py check
-sudo python3 -B ../deploy.py show   # 输出包含私有 URL，不公开粘贴
-```
+本目录提供双协议配置渲染、systemd 事务维护和验证工具。Compose 管理入口位于 [containers](containers/README.md)。服务端命令需要已有 Xray/Caddy 安装、Linux root 权限和完整私有状态；以下说明不代表空白主机可直接运行。
 
 ## 配置契约
 
-`/etc/xray-mihomo-deployer/deploy.env` 是现用输入，名称沿用原部署器。`SERVER_IP` 是可选连接覆盖字段；2026-10-28 当前部署已移除此字段，节点连接地址采用域名；`PROXY_DOMAIN`、`SUB_DOMAIN` 与双协议状态中的 `hy_domain` 各自负责 TLS 身份和路由；可选 `ROOT_DOMAIN` 仅提供有效 HTTPS 下的404。三协议/订阅域名必须不同，根域也必须独立。
+`deploy.py` 读取已有 `/etc/xray-mihomo-deployer/deploy.env`，渲染器要求以下字段：
 
-`/etc/cohost-proxy/state.json` 保存 final 阶段、HY 密码、订阅 token 和 Xray 状态摘要。state/deploy.env 均0600；Caddy 片段和订阅保持 root:caddy0640。不要把模板覆盖到这些有效文件。示例域名采用 example.com，测试采用文档专用 IPv4，不硬编码实际服务器或原域名。
+| 字段 | 含义 |
+| --- | --- |
+| `PROXY_DOMAIN`、`SUB_DOMAIN` | Xray 入口与订阅域名，必须不同 |
+| `NODE_NAME`、`SUB_FILENAME` | 原节点名称和旧订阅文件名 |
+| `XRAY_PORT` | Xray 回环监听端口 |
+| `VLESS_UUID` | Xray 认证 UUID，只存放于私有输入 |
+| `SUB_TOKEN`、`WS_TOKEN` | 旧订阅与 WebSocket 路由 token，只存放于私有输入 |
+| `ROOT_DOMAIN` | 可选的独立根域，提供 HTTPS 404 |
+| `SERVER_IP` | 可选的连接覆盖；使用域名连接时不填写 |
 
-渲染器保留 SNI、WS Host 和 `skip-cert-verify: false`。当前采用渲染器已有的无 SERVER_IP 模式，代理端点通过 proxy-server-nameserver 解析，三个基础设施域名走 DIRECT；HY 域名仍须仅 DNS，不能使用普通 HTTP CDN。更换 IP 后更新权威 DNS 并清理相关缓存，不必再修改客户端节点 IP。
+`config.example.json` 定义新 Hysteria2/双协议订阅参数：`hy_domain`、`hy_port`、`hy_password`、`sub_token`、`sub_filename`、`hy_node`、`probe_url`、`probe_interval`、`probe_tolerance`。示例凭据为空；首次安装时为空的认证值随机生成，已有部署则复用已保存的值。已有配置不一致时拒绝隐式轮换，域名、凭据及路由变更需要单独迁移。
 
-## 域名迁移
+Hysteria2、Xray、订阅三个域名互不相同，可选根域也必须独立。新订阅 token 和文件名必须不同于旧路由，Hysteria2 密码与新订阅 token 也不能相同。填写自己的域名和非秘密参数后，将输入留在受控位置；不要用模板覆盖运行状态。
 
-本轮按以下顺序完成指定服务器迁移，属于一次性运维，不是通用空白安装入口：
+默认采用域名连接，并保留 SNI、WebSocket Host 和 `skip-cert-verify: false`。只有显式提供 `SERVER_IP` 时才生成 IP 覆盖和相应直连规则。Hysteria2 的 DIRECT 拨号用于连接入口，不固定物理网卡。
 
-1. 使用已验证 SSH 身份检查运行状态，三个子域名 DNS-only 指向当前公网 IP，排除无效 AAAA。
-2. 原版本完整 check 通过，归档源码、配置、私有状态和证书并逐文件核验，保存0600回退包。
-3. 持有部署锁，核对源码摘要与私有状态摘要，先验证候选 mihomo 配置，再保存带原权限/属主的配置和源码事务快照。
-4. 原子更新域名、SERVER_IP、状态摘要、HY/Caddy 配置和订阅；验证 Caddy，再重启 Caddy/HY 签发新证书。Xray 配置、认证值、Compose 镜像和其他 Caddy 路由保留。
-5. 服务端检查通过后结束事务；失败时恢复原配置和源码，重启对应容器并检查。未完成标记和其引用备份必须保留。
-6. 公网可信订阅、错误 token 和外部隔离双协议/故障切换验证结果记录在根阶段文档。
+## systemd 部署阶段
 
-正式程序中已移除原域名专用 IP 提取逻辑。旧域名仅可能存在于私有回退包、旧证书及 Git 历史，均不是生效路由；不为清理代码破坏恢复资料。
+从项目根目录调用，`private/config.json` 为自行准备的受控输入：
 
-## systemd 工具边界
+```sh
+sudo python3 -B cohost/deploy.py install --config private/config.json
+sudo python3 -B cohost/deploy.py check
+# 完成外部客户端验证后再结束 staged 阶段
+sudo python3 -B cohost/deploy.py finalize
+```
 
-`deploy.py` 支持已有 Ubuntu24.04 x86_64/aarch64 的 Xray/Caddy 安装，不能用作空白主机安装器。Docker 标记存在时，除 show 外拒绝旧维护命令。若确需使用 install/finalize/update-rules/tune-network/decouple-services，先按 Docker 文档回退，确认 systemd 完整健康后执行；不要手动删除 Docker 标记绕过保护。
+安装流程校验已有 Xray/Caddy 输入、下载并校验固定版本的 Hysteria2/mihomo、渲染候选配置，再以事务方式发布。`staged` 阶段保留旧订阅路由用于切换；`finalize` 完成后移除旧路由并再次检查。
 
-旧工具使用 `/run/lock/cohost-proxy.lock`、`/etc/cohost-proxy/pending.json` 与 `/var/backups/cohost-proxy/` 保持事务。对应维护命令先恢复未完成事务，不手工清除 pending。tune-network 会显式重启服务，与只修改弱依赖 unit 的 decouple-services 不同。
+其他命令：
 
-恢复包含真实秘密，不入 Git；普通容器回退继续使用当前证书，不解压旧证书覆盖续期结果。跨机恢复或状态损坏时，先核对归档摘要、内容、权限、属主和路径，再制定恢复步骤。目录清单见 [001部署文件目录](../001部署文件目录.md)。
+| 命令 | 用途 |
+| --- | --- |
+| `check` | 校验私有状态、渲染结果、服务依赖、Hysteria2 TCP/UDP/错误认证和订阅 |
+| `show` | 在受控终端输出当前订阅地址，输出含秘密 |
+| `update-rules` | 检查现有状态后事务更新订阅规则 |
+| `decouple-services` | 调整 Hysteria2/Caddy 的 systemd 依赖关系 |
+| `tune-network` | 显式调整并持久化 TCP/UDP 参数，会重启相关服务 |
+
+存在 Docker 管理标记时，`deploy.py` 除 `show` 外拒绝上述旧模式命令。规则变更、网络调参或二进制升级需先按容器 README 回退并确认原服务健康，不能删除标记绕过保护。
+
+## 私有状态与事务
+
+下列是程序定义的标准路径，不是某台机器的部署清单：
+
+- `/etc/cohost-proxy/state.json`：阶段、Hysteria2/订阅参数和 Xray 输入摘要。
+- `/etc/cohost-proxy/pending.json`：未完成事务及其恢复依据。
+- `/run/lock/cohost-proxy.lock`：维护互斥锁。
+- `/var/backups/cohost-proxy/`：受控事务快照和回退资料。
+
+私有输入和状态使用 0600，订阅与 Caddy token 片段使用受限属组权限。程序在持锁后保存变更前状态，验证候选、原子写入并检查；失败时恢复。未完成标记及其引用的备份必须保留，不手工删除。
+
+备份可能包含真实认证和证书，不能提交 Git。普通容器回退复用现用证书；跨机或文件损坏恢复需先核对备份摘要、文件内容、权限、属主和目标路径，再实施受控恢复。
+
+## 本地与客户端验证
+
+本地运行方式、项目发布范围和验证边界见 [根 README](../README.md)。`verify.py` 供部署器调用；`verify_client.py` 使用临时 mihomo 验证 DNS、分流、双协议出口、完整下载与故障切换。`measure.py` 提供按需测量，结果默认写入本地 `build/`。
+
+恢复资料、部署现场信息、原始日志和审核记录留在私有位置，不附带到项目发布中。

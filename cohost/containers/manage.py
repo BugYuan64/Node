@@ -170,7 +170,8 @@ def migrate():
              "/usr/local/etc/xray", "/etc/hy2-mihomo", "/var/lib/caddy", "/var/lib/hy2-mihomo",
              "/srv/mihomo-sub", "/etc/systemd/system/xray.service",
              "/etc/systemd/system/xray.service.d", "/etc/systemd/system/hy2-mihomo.service",
-             "/usr/lib/systemd/system/caddy.service", "/home/ubuntu/cohost-proxy-20261020")]
+             "/usr/lib/systemd/system/caddy.service")]
+    paths.append(ROOT.parent)
     with tarfile.open(backup, "w:gz") as archive:
         for path in paths:
             archive.add(path, arcname=str(path).lstrip("/"))
