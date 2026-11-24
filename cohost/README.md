@@ -22,6 +22,31 @@ Hysteria2、Xray、订阅三个域名互不相同，可选根域也必须独立�
 
 默认采用域名连接，并保留 SNI、WebSocket Host 和 `skip-cert-verify: false`。只有显式提供 `SERVER_IP` 时才生成 IP 覆盖和相应直连规则。Hysteria2 的 DIRECT 拨号用于连接入口，不固定物理网卡。
 
+## 出口纯净度审计
+
+从项目根目录对生成 mihomo profile 执行离线审计。以下 `private/` 路径只是受控本地输入示例，其中报告可省略：
+
+```sh
+python -B cohost/egress_audit.py \
+  --profile private/mihomo.yaml \
+  --report private/egress-report.json
+python -B cohost/egress_audit.py --profile private/mihomo.yaml --json
+```
+
+工具使用项目本地检查已安装的 PyYAML 读取完整 profile，不访问网络。无报告时仍检查 profile；报告缺少 `categories` 等字段时给出警告而不是伪造结论。
+
+项目可控护栏包括：根级和 `dns` 的 IPv6 必须关闭；`dns.nameserver` 非空且每项使用精确的 `#PROXY`；`dns.proxy-server-nameserver` 与 `dns.direct-nameserver` 非空且不使用 `#PROXY`；最后一条规则为 `MATCH,PROXY`；`PROXY` 组及其子组不可达 `DIRECT`；至少存在两个具名代理节点和预期的 `自动选择`、`PROXY` 分组。代码不接受任意 `#<group>` 别名，避免未经验证的分组路径掩盖直连。
+
+报告中带 `pts` 的问题项按 ID、标签及分类归因为三类，并分别汇总原始分类权重；该合计不等于报告最终得分，也不能证明问题由当前 profile 引起。
+
+- `project`：DNS、IPv6、分流/路由类配置问题；只有报告问题确实来自本 profile 时，重新渲染并正确加载才可能缓解。
+- `client`：时区、语言、Turnstile、WebRTC 本机候选等浏览器/系统环境问题。
+- `egress`：机房属性、ASN 机器流量、风险/黑名单、注册地/广播定位等出口自身问题。
+
+退出码为：配置护栏通过 `0`；输入或解析错误 `1`；项目可控护栏失败 `2`；配合 `--fail-on-external` 且报告存在客户端/出口问题时 `3`。外部问题默认不使命令失败。
+
+该审计只能减少配置造成的 DNS、IPv6 和分流泄漏，不能改变 IP 类型、ASN 信誉、风险记录、广播定位、Turnstile、浏览器时区/语言或 WebRTC 本机地址，也不声明评分提升。客户端覆写 DNS、端口或 IPv6 后仍需重新验证实际行为。
+
 ## systemd 部署阶段
 
 从项目根目录调用，`private/config.json` 为自行准备的受控输入：

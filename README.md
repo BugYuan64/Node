@@ -9,6 +9,7 @@
 | 路径 | 职责 |
 | --- | --- |
 | `cohost/render.py` | 配置校验及 Hysteria2、Caddy、mihomo、systemd unit 渲染 |
+| `cohost/egress_audit.py` | 离线检查生成 profile 的 DNS、IPv6 与分流护栏，并按报告归因项目、客户端和出口问题 |
 | `cohost/deploy.py` | systemd 阶段部署、事务恢复、规则更新及共用验证函数 |
 | `cohost/containers/` | Compose 定义、镜像封装、迁移、检查和 systemd 回退 |
 | `cohost/verify.py` | 服务端 Hysteria2 TCP、UDP 及错误密码检查 |
@@ -48,6 +49,15 @@ python -B -m unittest discover -s cohost/tests -v
 
 CI 使用 Python 3.10、3.13，并以固定版本 mihomo 验证虚构配置能通过、错误配置能被拒绝。测试不会读取生产凭据或自动部署到服务器。
 
+生成 mihomo profile 后可离线审计项目可控护栏；报告同样只从本地读取：
+
+```sh
+python -B cohost/egress_audit.py --profile private/mihomo.yaml --report private/egress-report.json
+python -B cohost/egress_audit.py --profile private/mihomo.yaml --json
+```
+
+审计不访问网络，不需要报告也能运行。`--report` 只用于把输入报告中的问题点归因到项目配置、客户端环境或出口本身；外部问题默认不导致失败，`--fail-on-external` 可在存在外部问题时返回退出码 3。
+
 外部客户端验证按自己的受控配置和内核路径执行：
 
 ```sh
@@ -74,10 +84,12 @@ sudo python3 -B ../deploy.py show
 
 订阅包含国内/局域网直连、海外代理和 Google 服务/下载例外规则，Google 例外先于国内规则。国内 DoH 直连，海外及 Google DoH 经代理；入口域名单独解析并直连，Hysteria2 显式使用 DIRECT 拨号。自动组默认每 60 秒探测、超时 4 秒、容差 50ms，期望响应码 204；代理选择组不提供 DIRECT 选项。
 
+`egress_audit.py` 可确认生成 profile 保持根级/DNS IPv6 关闭、远端 DNS 使用 `#PROXY`、引导与直连 DNS 不使用 `#PROXY`、最终规则为 `MATCH,PROXY`，且 `PROXY` 及其子组不可达 `DIRECT`。这些检查只能避免配置引起的 DNS、IPv6 与分流泄漏，不能把机房 IP 变成住宅 IP，也不能改变 ASN 机器流量占比、风险或黑名单记录、IP 注册地/广播定位、Turnstile 交互、浏览器时区/语言或 WebRTC 本机候选地址。审计通过不代表评分提高。
+
 Clash Verge 的 DNS、端口和 IPv6 覆写可能改变订阅行为，重载使用客户端内置流程。Android 需检查系统 VPN 接管、应用访问控制、DNS 和 IPv6，分别验证 Wi-Fi、移动数据下的两个节点及自动选择。桌面下载成功不代表手机商店登录和实际安装已通过；已建立长连接也不会因组切换自动迁移。
 
 ## 发布内容与限制
 
-仓库仅保存项目本体、README、阶段设计和最终架构。真实订阅、UUID、密码、token、证书、SSH 密钥、本机配置、部署现场清单及过程/审核/诊断记录不上传；`build/`、`private/` 等本地目录由 Git 忽略，忽略规则不提供加密。
+仓库仅保存项目本体、README、阶段设计和最终架构。真实订阅、UUID、密码、token、证书、SSH 密钥、本机配置、部署现场清单及过程/审核/诊断记录不上传；`build/`、`private/` 等本地目录由 Git 忽略，包括私有 egress 报告，忽略规则不提供加密。
 
 现有功能不包含通用空白机安装、自动升级、持续告警和多 VPS 容灾。源码与离线测试的检查不能代替服务端业务、手机网络、整机重启或跨机恢复验收；具体部署及恢复材料由使用者在私有位置维护。
