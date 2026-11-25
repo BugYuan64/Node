@@ -91,8 +91,8 @@ def validate_containers():
     compose("run", "--rm", "--no-deps", "hysteria", "version")
 
 
-def check():
-    if legacy.PENDING.exists():
+def check(*, allow_pending: bool = False):
+    if legacy.PENDING.exists() and not allow_pending:
         raise RuntimeError("legacy transaction is pending")
     state = legacy.read_state()
     xray = legacy.load_xray_state(legacy.XRAY_STATE)
@@ -211,9 +211,57 @@ def migrate():
         raise
 
 
+def update_rules():
+    """Atomically update the rendered subscription YAML while Compose remains active."""
+    if not MARKER.exists() or json.loads(MARKER.read_text()).get("phase") != "active":
+        raise RuntimeError("Docker deployment is not active; use deploy.py update-rules or recover first")
+    if legacy.PENDING.exists():
+        pending = json.loads(legacy.PENDING.read_text())
+        if pending.get("action") != "update-rules":
+            raise RuntimeError("non-rule legacy transaction is pending; recover before updating rules")
+        legacy.restore_pending()
+    state = legacy.read_state()
+    if state["phase"] != "final":
+        raise RuntimeError("only finalized deployments are supported")
+    xray = legacy.load_xray_state(legacy.XRAY_STATE)
+    if hashlib.sha256(legacy.XRAY_STATE.read_bytes()).hexdigest() != state["xray_sha256"]:
+        raise RuntimeError("Xray state drifted since cohost installation")
+    settings = state["settings"]
+    data = legacy.render(xray, settings, legacy=False)
+    for path, key in ((legacy.CADDY_SNIPPET, "caddy.caddy"), (legacy.HY_CONFIG, "hysteria.yaml"),
+                      (legacy.UNIT, "hy2-mihomo.service")):
+        if not path.exists() or path.read_text(encoding="utf-8") != data[key]:
+            raise RuntimeError(f"non-subscription configuration differs: {path}")
+    sub_file = legacy.SUB_DIR / settings["sub_filename"]
+    if not sub_file.is_file():
+        raise RuntimeError("current subscription file is missing")
+    candidate = data["mihomo.yaml"].encode()
+    legacy.validate_mihomo(data["mihomo.yaml"])
+    caddy_gid = legacy.grp.getgrnam("caddy").gr_gid
+    snippet_stat = legacy.CADDY_SNIPPET.stat()
+    private_snippet = (snippet_stat.st_mode & 0o777 == 0o640 and snippet_stat.st_uid == 0
+                       and snippet_stat.st_gid == caddy_gid)
+    if sub_file.read_bytes() == candidate and private_snippet:
+        check()
+        print("Client rules already current")
+        return
+    paths = [sub_file] if private_snippet else [sub_file, legacy.CADDY_SNIPPET]
+    legacy.begin_change("update-rules", paths, settings)
+    try:
+        if not private_snippet:
+            legacy.atomic_write(legacy.CADDY_SNIPPET, data["caddy.caddy"].encode(), 0o640, 0, caddy_gid)
+        legacy.atomic_write(sub_file, candidate, 0o640, 0, caddy_gid)
+        check(allow_pending=True)
+        legacy.PENDING.unlink()
+    except Exception:
+        legacy.restore_pending()
+        raise
+    print("Updated client routing rules at the existing subscription URL without restarting containers")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("migrate", "check", "rollback"))
+    parser.add_argument("command", choices=("migrate", "check", "update-rules", "rollback"))
     args = parser.parse_args()
     legacy.require_server()
     os.umask(0o077)
@@ -223,6 +271,8 @@ def main():
             migrate()
         elif args.command == "check":
             check()
+        elif args.command == "update-rules":
+            update_rules()
         else:
             restore_services(json.loads(MARKER.read_text()))
 

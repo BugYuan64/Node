@@ -161,7 +161,13 @@ class RendererTests(unittest.TestCase):
         dns = config["dns"]
         self.assertTrue(dns["enable"])
         self.assertTrue(dns["listen"].startswith("127.0.0.1:"))
+        self.assertEqual(dns["nameserver"], [
+            "https://1.1.1.1/dns-query#PROXY",
+            "https://9.9.9.9/dns-query#PROXY",
+        ])
         self.assertTrue(all("#PROXY" in url for url in dns["nameserver"]))
+        self.assertTrue(all("8.8.8.8" not in url and "8.8.4.4" not in url and "dns.google" not in url
+                            for url in dns["nameserver"]))
         self.assertTrue(all("#PROXY" not in url for url in dns["proxy-server-nameserver"]))
         self.assertEqual(dns["nameserver-policy"]["geosite:cn,private"], dns["direct-nameserver"])
 

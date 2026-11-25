@@ -1,6 +1,6 @@
 # Docker Compose 部署
 
-本目录将**已有且已 finalize 的 systemd 双协议部署**迁移为 Compose 项目 `cohost-proxy`，提供 `migrate`、`check`、`rollback`。需要 Linux root、Docker Compose、现有配置、服务账号及 Xray/Caddy/Hysteria2 二进制；不负责空白机器初始化或 Docker 安装。
+本目录将**已有且已 finalize 的 systemd 双协议部署**迁移为 Compose 项目 `cohost-proxy`，提供 `migrate`、`check`、`update-rules`、`rollback`。需要 Linux root、Docker Compose、现有配置、服务账号及 Xray/Caddy/Hysteria2 二进制；不负责空白机器初始化或 Docker 安装。
 
 ## 镜像与运行结构
 
@@ -18,6 +18,8 @@
 cd /opt/Node/cohost/containers
 sudo docker compose ps
 sudo python3 -B manage.py check
+# 原子更新已渲染订阅 YAML（含备份、mihomo 校验与失败回滚，不重启容器）
+sudo python3 -B manage.py update-rules
 # 按需单独重启，不作为例行操作
 sudo docker compose restart xray
 sudo docker compose restart caddy
@@ -45,6 +47,6 @@ Docker 管理状态保存在 `/etc/cohost-proxy/docker.json`，包括阶段、�
 
 ## 维护边界
 
-容器接管后，原 `xray`、`caddy`、`hy2-mihomo` systemd 服务应停止并禁用，避免抢占端口。`deploy.py` 除 `show` 外拒绝旧维护命令；需要修改规则、调参或升级二进制时，先回退并验证原服务，再执行对应维护及重新迁移。
+容器接管后，原 `xray`、`caddy`、`hy2-mihomo` systemd 服务应停止并禁用，避免抢占端口。`deploy.py` 除 `show` 外拒绝旧维护命令；Compose 模式下的订阅规则更新通过 `manage.py update-rules` 原子替换并校验，不重启容器；网络调参或二进制升级仍需先回退并验证原服务，再执行对应维护及重新迁移。
 
 本项目不自动改变云防火墙、Docker 守护进程或其他容器。离线测试不能代替服务器迁移、真实客户端、重启和跨机恢复验证；本 README 不保存特定服务器的 IP、指纹、备份时间或审核流水。

@@ -35,7 +35,7 @@ python -B cohost/egress_audit.py --profile private/mihomo.yaml --json
 
 工具使用项目本地检查已安装的 PyYAML 读取完整 profile，不访问网络。无报告时仍检查 profile；报告缺少 `categories` 等字段时给出警告而不是伪造结论。
 
-项目可控护栏包括：根级和 `dns` 的 IPv6 必须关闭；`dns.nameserver` 非空且每项使用精确的 `#PROXY`；`dns.proxy-server-nameserver` 与 `dns.direct-nameserver` 非空且不使用 `#PROXY`；最后一条规则为 `MATCH,PROXY`；`PROXY` 组及其子组不可达 `DIRECT`；至少存在两个具名代理节点和预期的 `自动选择`、`PROXY` 分组。代码不接受任意 `#<group>` 别名，避免未经验证的分组路径掩盖直连。
+项目可控护栏包括：根级和 `dns` 的 IPv6 必须关闭；`dns.nameserver` 非空、每项使用精确的 `#PROXY` 且避开 `8.8.8.8`/`8.8.4.4`/`dns.google` 等易跨区归属或带 ECS 的公共解析器；`dns.proxy-server-nameserver` 与 `dns.direct-nameserver` 非空且不使用 `#PROXY`；最后一条规则为 `MATCH,PROXY`；`PROXY` 组及其子组不可达 `DIRECT`；至少存在两个具名代理节点和预期的 `自动选择`、`PROXY` 分组。代码不接受任意 `#<group>` 别名，避免未经验证的分组路径掩盖直连。
 
 报告中带 `pts` 的问题项按 ID、标签及分类归因为三类，并分别汇总原始分类权重；该合计不等于报告最终得分，也不能证明问题由当前 profile 引起。
 
@@ -70,7 +70,7 @@ sudo python3 -B cohost/deploy.py finalize
 | `decouple-services` | 调整 Hysteria2/Caddy 的 systemd 依赖关系 |
 | `tune-network` | 显式调整并持久化 TCP/UDP 参数，会重启相关服务 |
 
-存在 Docker 管理标记时，`deploy.py` 除 `show` 外拒绝上述旧模式命令。规则变更、网络调参或二进制升级需先按容器 README 回退并确认原服务健康，不能删除标记绕过保护。
+存在 Docker 管理标记时，`deploy.py` 除 `show` 外拒绝上述旧模式命令。Compose 模式下的订阅规则更新使用 `containers/manage.py update-rules`；网络调参或二进制升级需先按容器 README 回退并确认原服务健康，不能删除标记绕过保护。
 
 ## 私有状态与事务
 

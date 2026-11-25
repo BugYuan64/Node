@@ -8,6 +8,8 @@ from unittest.mock import patch
 
 from cohost import deploy
 from cohost.containers import manage
+from cohost.render import load_xray_state, render
+from cohost.tests.test_render import SETTINGS, XRAY_TEXT
 
 
 class ContainerSafetyTests(unittest.TestCase):
@@ -153,6 +155,133 @@ class ContainerSafetyTests(unittest.TestCase):
             self.assertIn(("systemctl", "start", *manage.SERVICES), calls)
             self.assertEqual(calls[-1], ("verified",))
             self.assertFalse(marker.exists())
+
+    def test_compose_update_rules_updates_subscription_without_restarting_containers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            marker = root / "docker.json"
+            marker.write_text('{"phase":"active"}', encoding="utf-8")
+            pending = root / "pending.json"
+            backups = root / "backups"
+            backups.mkdir()
+            xray_state = root / "deploy.env"
+            xray_state.write_text(XRAY_TEXT, encoding="utf-8")
+            xray = load_xray_state(xray_state)
+            data = render(xray, SETTINGS, legacy=False)
+            caddy = root / "xray-mihomo.caddy"
+            caddy.write_text(data["caddy.caddy"], encoding="utf-8")
+            hy = root / "hysteria.yaml"
+            hy.write_text(data["hysteria.yaml"], encoding="utf-8")
+            unit = root / "hy2-mihomo.service"
+            unit.write_text(data["hy2-mihomo.service"], encoding="utf-8")
+            sub_dir = root / "sub"
+            sub_dir.mkdir()
+            sub_file = sub_dir / SETTINGS["sub_filename"]
+            sub_file.write_text("old-subscription\n", encoding="utf-8")
+            saved = {
+                "version": 1,
+                "phase": "final",
+                "settings": dict(SETTINGS),
+                "xray_sha256": hashlib.sha256(xray_state.read_bytes()).hexdigest(),
+            }
+            fake_stat = SimpleNamespace(st_mode=0o100640, st_uid=0, st_gid=988)
+            original_stat = Path.stat
+
+            def stat_override(path, *args, **kwargs):
+                if path == caddy:
+                    return fake_stat
+                return original_stat(path, *args, **kwargs)
+
+            def write(path, content, mode, uid=0, gid=0):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+
+            checks = []
+            with patch.object(manage, "MARKER", marker), \
+                 patch.object(manage, "compose") as compose_mock, \
+                 patch.object(manage, "check", side_effect=lambda *, allow_pending=False: checks.append(allow_pending)), \
+                 patch.multiple(manage.legacy, PENDING=pending, BACKUP_ROOT=backups,
+                                XRAY_STATE=xray_state, CADDY_SNIPPET=caddy,
+                                HY_CONFIG=hy, UNIT=unit, SUB_DIR=sub_dir), \
+                 patch.object(manage.legacy, "read_state", return_value=saved), \
+                 patch.object(manage.legacy, "validate_mihomo"), \
+                 patch.object(manage.legacy, "atomic_write", side_effect=write), \
+                 patch.object(manage.legacy, "grp", SimpleNamespace(getgrnam=lambda name: SimpleNamespace(gr_gid=988))), \
+                 patch.object(Path, "stat", stat_override):
+                manage.update_rules()
+                self.assertEqual(sub_file.read_text(encoding="utf-8"), data["mihomo.yaml"])
+                self.assertEqual(checks, [True])
+                self.assertFalse(pending.exists())
+                self.assertEqual(len(list(backups.glob("update-rules-*.json"))), 1)
+                compose_mock.assert_not_called()
+
+                # Second run is idempotent and creates no extra backup.
+                manage.update_rules()
+                self.assertEqual(checks, [True, False])
+                self.assertEqual(len(list(backups.glob("update-rules-*.json"))), 1)
+
+    def test_compose_update_rules_rolls_back_subscription_when_check_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            marker = root / "docker.json"
+            marker.write_text('{"phase":"active"}', encoding="utf-8")
+            pending = root / "pending.json"
+            backups = root / "backups"
+            backups.mkdir()
+            xray_state = root / "deploy.env"
+            xray_state.write_text(XRAY_TEXT, encoding="utf-8")
+            xray = load_xray_state(xray_state)
+            data = render(xray, SETTINGS, legacy=False)
+            caddy = root / "xray-mihomo.caddy"
+            caddy.write_text(data["caddy.caddy"], encoding="utf-8")
+            hy = root / "hysteria.yaml"
+            hy.write_text(data["hysteria.yaml"], encoding="utf-8")
+            unit = root / "hy2-mihomo.service"
+            unit.write_text(data["hy2-mihomo.service"], encoding="utf-8")
+            sub_dir = root / "sub"
+            sub_dir.mkdir()
+            sub_file = sub_dir / SETTINGS["sub_filename"]
+            sub_file.write_text("old-subscription\n", encoding="utf-8")
+            saved = {
+                "version": 1,
+                "phase": "final",
+                "settings": dict(SETTINGS),
+                "xray_sha256": hashlib.sha256(xray_state.read_bytes()).hexdigest(),
+            }
+            fake_stat = SimpleNamespace(st_mode=0o100640, st_uid=0, st_gid=988)
+            original_stat = Path.stat
+
+            def stat_override(path, *args, **kwargs):
+                if path == caddy:
+                    return fake_stat
+                return original_stat(path, *args, **kwargs)
+
+            def write(path, content, mode, uid=0, gid=0):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+
+            with patch.object(manage, "MARKER", marker), \
+                 patch.object(manage, "check", side_effect=RuntimeError("subscription verify failed")), \
+                 patch.multiple(manage.legacy, PENDING=pending, BACKUP_ROOT=backups,
+                                XRAY_STATE=xray_state, CADDY_SNIPPET=caddy,
+                                HY_CONFIG=hy, UNIT=unit, SUB_DIR=sub_dir), \
+                 patch.object(manage.legacy, "read_state", return_value=saved), \
+                 patch.object(manage.legacy, "validate_mihomo"), \
+                 patch.object(manage.legacy, "atomic_write", side_effect=write), \
+                 patch.object(manage.legacy, "grp", SimpleNamespace(getgrnam=lambda name: SimpleNamespace(gr_gid=988))), \
+                 patch.object(Path, "stat", stat_override):
+                with self.assertRaisesRegex(RuntimeError, "subscription verify failed"):
+                    manage.update_rules()
+            self.assertEqual(sub_file.read_text(encoding="utf-8"), "old-subscription\n")
+            self.assertFalse(pending.exists())
+
+    def test_compose_update_rules_rejects_inactive_marker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "docker.json"
+            marker.write_text('{"phase":"switching"}', encoding="utf-8")
+            with patch.object(manage, "MARKER", marker):
+                with self.assertRaisesRegex(RuntimeError, "not active"):
+                    manage.update_rules()
 
 
 if __name__ == "__main__":

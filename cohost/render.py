@@ -187,7 +187,7 @@ dns:
     - https://doh.pub/dns-query
   nameserver: &foreign-dns
     - https://1.1.1.1/dns-query#PROXY
-    - https://8.8.8.8/dns-query#PROXY
+    - https://9.9.9.9/dns-query#PROXY
   nameserver-policy:
 {google_dns}    'geosite:google': *foreign-dns
     'geosite:cn,private': *domestic-dns

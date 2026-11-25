@@ -156,8 +156,58 @@ class EgressAuditTests(unittest.TestCase):
         result = self.audit_text(self.profile_text)
         self.assertTrue(result["passed"])
         self.assertEqual(result["failed_ids"], [])
-        self.assertEqual(len(result["checks"]), 9)
+        self.assertEqual(len(result["checks"]), 10)
         self.assertTrue(all(check["status"] == "pass" for check in result["checks"]))
+
+    def test_google_public_dns_in_foreign_nameserver_is_flagged(self):
+        for resolver in (
+            "https://8.8.8.8/dns-query#PROXY",
+            "https://8.8.4.4/dns-query#PROXY",
+            "https://dns.google/dns-query#PROXY",
+        ):
+            with self.subTest(resolver=resolver):
+                text = self.profile_text.replace(
+                    "https://9.9.9.9/dns-query#PROXY", resolver, 1
+                )
+                result = self.audit_text(text)
+                self.assertFalse(result["passed"])
+                self.assertIn("dns.nameserver.region_safe", result["failed_ids"])
+
+    def test_report_cross_region_dns_resolvers_and_details_are_surfaced(self):
+        enriched = dict(REPORT)
+        enriched["summary"] = {"country": "JP"}
+        enriched["categories"] = [
+            {
+                "id": "live",
+                "label": "连接实测",
+                "items": [
+                    {
+                        "id": "dns",
+                        "label": "DNS 跨区解析",
+                        "pts": 3,
+                        "detail": "公共 DNS 在 JP/US 解析，出口在 JP",
+                    }
+                ],
+            }
+        ]
+        enriched["probes"] = {
+            "dnsClassified": {
+                "resolvers": [
+                    {"org": "CloudFlare Inc", "country": "JP", "kind": "same"},
+                    {"org": "Google LLC", "country": "US", "kind": "public"},
+                    {"org": "Google LLC", "country": "US", "kind": "public"},
+                    {"org": "Amazon.com Inc.", "country": "JP", "kind": "own"},
+                ]
+            }
+        }
+        result = classify_report(enriched)
+        self.assertEqual(
+            result["findings"][0]["detail"], "公共 DNS 在 JP/US 解析，出口在 JP"
+        )
+        self.assertEqual(
+            result["dns_cross_region"],
+            [{"org": "Google LLC", "country": "US", "kind": "public", "count": 2}],
+        )
 
     def test_enabled_ipv6_is_rejected_at_root_and_dns(self):
         variants = {

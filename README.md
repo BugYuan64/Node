@@ -74,6 +74,8 @@ python -B cohost/verify_client.py --config private/config.yaml --mihomo /path/to
 cd /opt/Node/cohost/containers
 sudo docker compose ps
 sudo python3 -B manage.py check
+# 仅在订阅规则变更时原子更新订阅，不重启容器
+sudo python3 -B manage.py update-rules
 # 仅在受控终端查看订阅；输出含私有 URL
 sudo python3 -B ../deploy.py show
 ```
@@ -82,9 +84,9 @@ sudo python3 -B ../deploy.py show
 
 ## 分流与客户端
 
-订阅包含国内/局域网直连、海外代理和 Google 服务/下载例外规则，Google 例外先于国内规则。国内 DoH 直连，海外及 Google DoH 经代理；入口域名单独解析并直连，Hysteria2 显式使用 DIRECT 拨号。自动组默认每 60 秒探测、超时 4 秒、容差 50ms，期望响应码 204；代理选择组不提供 DIRECT 选项。
+订阅包含国内/局域网直连、海外代理和 Google 服务/下载例外规则，Google 例外先于国内规则。国内 DoH 直连，海外及 Google DoH 经代理使用 Cloudflare（`1.1.1.1`）与 Quad9（`9.9.9.9`）避开易跨区归属或带 ECS 的解析器；入口域名单独解析并直连，Hysteria2 显式使用 DIRECT 拨号。自动组默认每 60 秒探测、超时 4 秒、容差 50ms，期望响应码 204；代理选择组不提供 DIRECT 选项。
 
-`egress_audit.py` 可确认生成 profile 保持根级/DNS IPv6 关闭、远端 DNS 使用 `#PROXY`、引导与直连 DNS 不使用 `#PROXY`、最终规则为 `MATCH,PROXY`，且 `PROXY` 及其子组不可达 `DIRECT`。这些检查只能避免配置引起的 DNS、IPv6 与分流泄漏，不能把机房 IP 变成住宅 IP，也不能改变 ASN 机器流量占比、风险或黑名单记录、IP 注册地/广播定位、Turnstile 交互、浏览器时区/语言或 WebRTC 本机候选地址。审计通过不代表评分提高。
+`egress_audit.py` 可确认生成 profile 保持根级/DNS IPv6 关闭、远端 DNS 使用 `#PROXY` 且避开 `8.8.8.8`/`8.8.4.4`/`dns.google` 等易跨区或带 ECS 的公共解析器、引导与直连 DNS 不使用 `#PROXY`、最终规则为 `MATCH,PROXY`，且 `PROXY` 及其子组不可达 `DIRECT`。这些检查只能避免配置引起的 DNS、IPv6 与分流泄漏，不能把机房 IP 变成住宅 IP，也不能改变 ASN 机器流量占比、风险或黑名单记录、IP 注册地/广播定位、Turnstile 交互、浏览器时区/语言或 WebRTC 本机候选地址。审计通过不代表评分提高。
 
 Clash Verge 的 DNS、端口和 IPv6 覆写可能改变订阅行为，重载使用客户端内置流程。Android 需检查系统 VPN 接管、应用访问控制、DNS 和 IPv6，分别验证 Wi-Fi、移动数据下的两个节点及自动选择。桌面下载成功不代表手机商店登录和实际安装已通过；已建立长连接也不会因组切换自动迁移。
 

@@ -30,6 +30,7 @@ from pathlib import Path
 import re
 import sys
 from typing import Any, Mapping, Sequence
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -38,6 +39,13 @@ TOOL_VERSION = 1
 EXPECTED_SCHEMA = "egress-report/v3"
 EXPECTED_GROUPS = ("自动选择", "PROXY")
 PROXY_ROUTE_SUFFIX = "#PROXY"
+CROSS_REGION_PUBLIC_DNS_HOSTS = {
+    "8.8.8.8",
+    "8.8.4.4",
+    "dns.google",
+    "2001:4860:4860::8888",
+    "2001:4860:4860::8844",
+}
 
 EXIT_OK = 0
 EXIT_INPUT = 1
@@ -139,6 +147,14 @@ def _is_proxy_routed(resolver: str) -> bool:
     return resolver.rsplit("#", 1)[1] == "PROXY"
 
 
+def _resolver_host(resolver: str) -> str | None:
+    target = resolver.split("#", 1)[0].strip()
+    if not target:
+        return None
+    parsed = urlsplit(target if "://" in target else f"//{target}")
+    return parsed.hostname.casefold() if parsed.hostname else None
+
+
 def _find_direct_path(name: str, groups: Mapping[str, list[str]],
                       stack: tuple[str, ...] = ()) -> list[str] | None:
     if name in stack:
@@ -186,6 +202,13 @@ def audit_profile(profile: Mapping[str, Any]) -> dict[str, Any]:
             "dns.nameserver 缺失、为空或包含非字符串条目",
             "提供非空的远端 DoH 列表，并为每一项追加精确的 #PROXY 路由标记。",
         ))
+        checks.append(_check(
+            "dns.nameserver.region_safe",
+            "远端 DNS 避开易跨区/ECS 解析器",
+            False,
+            "dns.nameserver 缺失、为空或包含非字符串条目",
+            "使用同区归属稳定且无 ECS 的远端 DoH（如 https://1.1.1.1/dns-query#PROXY、https://9.9.9.9/dns-query#PROXY）。",
+        ))
     else:
         bad = [index for index, value in enumerate(nameserver) if not _is_proxy_routed(value)]
         checks.append(_check(
@@ -194,6 +217,19 @@ def audit_profile(profile: Mapping[str, Any]) -> dict[str, Any]:
             not bad,
             "所有条目均以 #PROXY 结束" if not bad else f"{len(bad)} 个条目未使用精确的 #PROXY",
             "为每个 dns.nameserver 条目使用 #PROXY；代码不接受未经验证的其他组别名。",
+        ))
+        flagged_hosts = sorted({
+            host for value in nameserver
+            if (host := _resolver_host(value)) in CROSS_REGION_PUBLIC_DNS_HOSTS
+        })
+        checks.append(_check(
+            "dns.nameserver.region_safe",
+            "远端 DNS 避开易跨区/ECS 解析器",
+            not flagged_hosts,
+            "未使用 8.8.8.8/8.8.4.4/dns.google 等易跨区归属或带 ECS 的公共解析器"
+            if not flagged_hosts
+            else "包含易跨区归属或带 ECS 的公共解析器: " + ", ".join(flagged_hosts),
+            "移除 8.8.8.8 / 8.8.4.4 / dns.google，改用同区归属稳定且无 ECS 的 DoH（如 https://1.1.1.1/dns-query#PROXY、https://9.9.9.9/dns-query#PROXY）。",
         ))
 
     for key, check_id, label in (
@@ -371,6 +407,7 @@ def classify_report(report: Mapping[str, Any] | None,
         "grade": None,
         "verdict": None,
         "findings": [],
+        "dns_cross_region": [],
         "point_totals": {"project": 0, "client": 0, "egress": 0},
         "counts": {"project": 0, "client": 0, "egress": 0},
         "external_findings_present": False,
@@ -435,6 +472,7 @@ def classify_report(report: Mapping[str, Any] | None,
                 continue
             item_id = str(item.get("id") or item.get("key") or f"item-{item_index}")
             label = str(item.get("label") or item.get("title") or item_id)
+            detail = str(item.get("detail") or "")
             points = _number(item.get("pts", item.get("points", 0)))
             attribution, basis = _classify(item_id, label, category_id)
             findings.append({
@@ -442,12 +480,38 @@ def classify_report(report: Mapping[str, Any] | None,
                 "category_label": category_label,
                 "id": item_id,
                 "label": label,
+                "detail": detail,
                 "points": _rounded(points),
                 "source": f"categories[{category_index}].items[{item_index}]",
                 "basis": basis,
             })
             totals[attribution] += points
             counts[attribution] += 1
+
+    summary_map = report.get("summary")
+    exit_country = (
+        summary_map.get("country")
+        if isinstance(summary_map, Mapping) and isinstance(summary_map.get("country"), str)
+        else None
+    )
+    probes = report.get("probes")
+    dns_probe = probes.get("dnsClassified") if isinstance(probes, Mapping) else None
+    cross_region_seen: dict[tuple[str, str, str], int] = {}
+    if isinstance(dns_probe, Mapping) and isinstance(dns_probe.get("resolvers"), list):
+        for resolver in dns_probe["resolvers"]:
+            if not isinstance(resolver, Mapping):
+                continue
+            country = resolver.get("country") if isinstance(resolver.get("country"), str) else ""
+            kind = resolver.get("kind") if isinstance(resolver.get("kind"), str) else ""
+            org = resolver.get("org") if isinstance(resolver.get("org"), str) else "unknown"
+            is_mismatch = bool(exit_country and country and country != exit_country)
+            if kind in ("public", "leak") or is_mismatch:
+                key = (org, country or "unknown", kind or "unknown")
+                cross_region_seen[key] = cross_region_seen.get(key, 0) + 1
+    result["dns_cross_region"] = [
+        {"org": org, "country": country, "kind": kind, "count": count}
+        for (org, country, kind), count in sorted(cross_region_seen.items())
+    ]
 
     result["findings"] = findings
     result["point_totals"] = {key: _rounded(value) for key, value in totals.items()}
@@ -529,10 +593,17 @@ def format_text(result: Mapping[str, Any]) -> str:
                 f"报告权重合计 {_format_points(report['point_totals'][attribution])} 分"
             )
             for item in classified:
+                suffix = f" — {item['detail']}" if item.get("detail") else ""
                 lines.append(
                     f"  - {item['label']} ({_format_points(item['points'])} 分; "
-                    f"{item['source']})"
+                    f"{item['source']}){suffix}"
                 )
+        if report.get("dns_cross_region"):
+            parts = [
+                f"{entry['org']} ({entry['country']}, {entry['kind']}×{entry['count']})"
+                for entry in report["dns_cross_region"]
+            ]
+            lines.append("- 报告观测到的跨区/异常解析器: " + "、".join(parts))
         for warning in report["warnings"]:
             lines.append(f"- 警告: {warning}")
 
